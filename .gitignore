@@ -1,0 +1,47 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+.pnpm-store/
+
+# Tauri
+src-tauri/target/
+
+# Android
+.gradle/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+
+# Xcode / iOS
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+*.local
+
+# Logs
+*.log

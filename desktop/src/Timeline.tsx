@@ -11,7 +11,10 @@ function formatTime(iso: string): string {
 function describe(obs: Observation): string {
   if (obs.kind === "app_usage") {
     const name = obs.app_name ?? "(unknown app)";
-    return obs.is_active === false ? `${name} · idle` : name;
+    const title = obs.window_title;
+    const status = obs.is_active === false ? " · idle" : "";
+    const base = title ? `${name} — ${title}` : name;
+    return `${base}${status}`;
   }
   if (obs.kind === "idle") return `idle ${obs.idle_seconds}s`;
   return obs.kind;

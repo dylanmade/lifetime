@@ -34,3 +34,9 @@ export const enableEncryption = (
 
 export const getRecentObservations = (limit: number): Promise<Observation[]> =>
   invoke("get_recent_observations", { limit });
+
+export const isAccessibilityGranted = (): Promise<boolean> =>
+  invoke("accessibility_granted");
+
+export const requestAccessibility = (): Promise<boolean> =>
+  invoke("request_accessibility");

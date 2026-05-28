@@ -190,6 +190,30 @@ fn enable_encryption(
 }
 
 #[tauri::command]
+fn accessibility_granted() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        lifetime_tracker::macos::is_accessibility_granted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+fn request_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        lifetime_tracker::macos::request_accessibility_permission()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
 fn get_recent_observations(
     ctx: State<Arc<AppContext>>,
     limit: usize,
@@ -239,6 +263,8 @@ pub fn run() {
             unlock,
             enable_encryption,
             get_recent_observations,
+            accessibility_granted,
+            request_accessibility,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

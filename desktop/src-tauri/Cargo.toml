@@ -1,0 +1,24 @@
+[package]
+name = "lifetime-desktop"
+version = "0.0.1"
+description = "Lifetime desktop client"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lifetime-core = { workspace = true }
+lifetime-crypto = { workspace = true }
+lifetime-tracker = { workspace = true }
+uuid = { version = "1", features = ["v7"] }
+time = { version = "0.3", features = ["formatting"] }

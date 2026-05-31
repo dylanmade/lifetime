@@ -1,4 +1,13 @@
 import { useEffect, useState } from "react";
+import { Lock, ShieldCheck, Eye } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   type AppStateInfo,
   isAccessibilityGranted,
@@ -16,8 +25,9 @@ export function Settings({ appState, onStateChanged }: Props) {
   const [axGranted, setAxGranted] = useState<boolean | null>(null);
   const [axRequested, setAxRequested] = useState(false);
 
-  const fingerprint =
-    "fingerprint" in appState ? appState.fingerprint : null;
+  const fingerprint = "fingerprint" in appState ? appState.fingerprint : null;
+  const isEncrypted =
+    appState.status === "locked" || appState.status === "unlocked";
 
   useEffect(() => {
     isAccessibilityGranted().then(setAxGranted);
@@ -30,76 +40,108 @@ export function Settings({ appState, onStateChanged }: Props) {
   }
 
   return (
-    <main className="container">
-      <h1>Settings</h1>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      </div>
 
-      <section className="settings-section">
-        <h2>Security</h2>
-        {appState.status === "plaintext" && (
-          <>
-            <p>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            {isEncrypted ? (
+              <ShieldCheck className="text-primary h-4 w-4" />
+            ) : (
+              <Lock className="text-muted-foreground h-4 w-4" />
+            )}
+            Security
+          </CardTitle>
+          {appState.status === "plaintext" ? (
+            <CardDescription>
               Your data is currently stored unencrypted on this device. Anyone
-              with access to the disk (including some cloud backups) can read it.
-              Enable encryption to protect your data with a passphrase.
-            </p>
-            <button type="button" onClick={() => setShowEnable(true)}>
+              with access to the disk (including some cloud backups) can read
+              it. Enable encryption to protect your data with a passphrase.
+            </CardDescription>
+          ) : (
+            <CardDescription>
+              Encryption is enabled. Your data is encrypted at rest with a key
+              derived from your passphrase.
+            </CardDescription>
+          )}
+        </CardHeader>
+        <CardContent>
+          {appState.status === "plaintext" && (
+            <Button onClick={() => setShowEnable(true)}>
               Enable encryption
-            </button>
-          </>
-        )}
-        {(appState.status === "locked" || appState.status === "unlocked") && (
-          <p>
-            Encryption is enabled.
-            {fingerprint && (
-              <>
-                <br />
-                Master key: <code>{fingerprint}</code>
-              </>
-            )}
-          </p>
-        )}
-      </section>
-
-      <section className="settings-section">
-        <h2>Tracking</h2>
-        <p>
-          Window titles add useful detail to your timeline — "Safari — Hacker
-          News" instead of just "Safari". They require Accessibility permission,
-          which you grant in System Settings under Privacy &amp; Security.
-        </p>
-        {axGranted === null && (
-          <p className="subtitle">Checking permission…</p>
-        )}
-        {axGranted !== null && (
-          <>
-            <p>
-              Status:{" "}
-              <strong>{axGranted ? "Granted" : "Not granted"}</strong>
+            </Button>
+          )}
+          {isEncrypted && fingerprint && (
+            <p className="text-muted-foreground text-sm">
+              Master key:{" "}
+              <code className="bg-muted rounded px-1.5 py-0.5 text-xs">
+                {fingerprint}
+              </code>
             </p>
-            {!axGranted && (
-              <button type="button" onClick={handleAccessibility}>
-                {axRequested ? "Check status" : "Grant access"}
-              </button>
-            )}
-            {axGranted && axRequested && (
-              <p className="subtitle">
-                Window titles will appear in new observations. If they don't,
-                restart Lifetime so the permission is fully picked up.
-              </p>
-            )}
-          </>
-        )}
-      </section>
+          )}
+        </CardContent>
+      </Card>
 
-      {showEnable && (
-        <EnableEncryption
-          onClose={() => setShowEnable(false)}
-          onCompleted={() => {
-            setShowEnable(false);
-            onStateChanged();
-          }}
-        />
-      )}
-    </main>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Eye className="text-muted-foreground h-4 w-4" />
+            Tracking
+          </CardTitle>
+          <CardDescription>
+            Window titles add useful detail to your timeline — "Safari — Hacker
+            News" instead of just "Safari". They require Accessibility
+            permission, which you grant in System Settings under Privacy &amp;
+            Security.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {axGranted === null && (
+            <p className="text-muted-foreground text-sm">
+              Checking permission…
+            </p>
+          )}
+          {axGranted !== null && (
+            <>
+              <p className="text-sm">
+                Status:{" "}
+                <span
+                  className={
+                    axGranted
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {axGranted ? "Granted" : "Not granted"}
+                </span>
+              </p>
+              {!axGranted && (
+                <Button variant="outline" onClick={handleAccessibility}>
+                  {axRequested ? "Check status" : "Grant access"}
+                </Button>
+              )}
+              {axGranted && axRequested && (
+                <p className="text-muted-foreground text-sm">
+                  Window titles will appear in new observations. If they don't,
+                  restart Lifetime so the permission is fully picked up.
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <EnableEncryption
+        open={showEnable}
+        onOpenChange={setShowEnable}
+        onCompleted={() => {
+          setShowEnable(false);
+          onStateChanged();
+        }}
+      />
+    </div>
   );
 }

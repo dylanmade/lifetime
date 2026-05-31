@@ -3,12 +3,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use lifetime_core::model::{Observation, ObservationKind};
+use lifetime_core::aggregate::{
+    AppDuration, AppSegment, HourActivity, aggregate_by_app, aggregate_by_hour,
+    aggregate_into_segments,
+};
+use lifetime_core::model::{
+    Activity, ActivityKind, ManualActivity, Observation, ObservationKind,
+};
 use lifetime_core::storage::{self, Store};
 use lifetime_crypto::{MasterKey, RecoveryFile, SealedVault, vault as crypto_vault};
 use serde::Serialize;
 use tauri::{Manager, State};
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
@@ -225,6 +232,144 @@ fn get_recent_observations(
     store.recent_observations(limit).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_app_totals(
+    ctx: State<Arc<AppContext>>,
+    start_iso: String,
+    end_iso: String,
+) -> Result<Vec<AppDuration>, String> {
+    let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard
+        .store()
+        .ok_or_else(|| "app is locked".to_string())?;
+    let observations = store
+        .observations_between(start, end)
+        .map_err(|e| e.to_string())?;
+
+    Ok(aggregate_by_app(
+        &observations,
+        end,
+        time::Duration::minutes(2),
+    ))
+}
+
+#[tauri::command]
+fn create_manual_activity(
+    ctx: State<Arc<AppContext>>,
+    title: String,
+    description: Option<String>,
+    starts_at_iso: String,
+    ends_at_iso: Option<String>,
+) -> Result<Activity, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("title cannot be empty".to_string());
+    }
+    let starts_at =
+        OffsetDateTime::parse(&starts_at_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let ends_at = match ends_at_iso {
+        Some(s) => Some(OffsetDateTime::parse(&s, &Rfc3339).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    if let Some(end) = ends_at {
+        if end <= starts_at {
+            return Err("end time must be after start time".to_string());
+        }
+    }
+
+    let activity = Activity {
+        id: Uuid::now_v7(),
+        device_id: ctx.device_id,
+        starts_at,
+        ends_at,
+        kind: ActivityKind::Manual(ManualActivity {
+            title,
+            description: description.and_then(|s| {
+                let trimmed = s.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
+            }),
+        }),
+    };
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard
+        .store()
+        .ok_or_else(|| "app is locked".to_string())?;
+    store.insert_activity(&activity).map_err(|e| e.to_string())?;
+    Ok(activity)
+}
+
+#[tauri::command]
+fn get_activities_between(
+    ctx: State<Arc<AppContext>>,
+    start_iso: String,
+    end_iso: String,
+) -> Result<Vec<Activity>, String> {
+    let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard
+        .store()
+        .ok_or_else(|| "app is locked".to_string())?;
+    store
+        .activities_between(start, end)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_hourly_activity(
+    ctx: State<Arc<AppContext>>,
+    start_iso: String,
+    end_iso: String,
+) -> Result<Vec<HourActivity>, String> {
+    let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard
+        .store()
+        .ok_or_else(|| "app is locked".to_string())?;
+    let observations = store
+        .observations_between(start, end)
+        .map_err(|e| e.to_string())?;
+
+    Ok(aggregate_by_hour(
+        &observations,
+        start,
+        end,
+        time::Duration::minutes(2),
+    ))
+}
+
+#[tauri::command]
+fn get_timeline_segments(
+    ctx: State<Arc<AppContext>>,
+    start_iso: String,
+    end_iso: String,
+) -> Result<Vec<AppSegment>, String> {
+    let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard
+        .store()
+        .ok_or_else(|| "app is locked".to_string())?;
+    let observations = store
+        .observations_between(start, end)
+        .map_err(|e| e.to_string())?;
+
+    Ok(aggregate_into_segments(
+        &observations,
+        start,
+        end,
+        time::Duration::minutes(2),
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -263,6 +408,11 @@ pub fn run() {
             unlock,
             enable_encryption,
             get_recent_observations,
+            get_app_totals,
+            get_hourly_activity,
+            get_timeline_segments,
+            create_manual_activity,
+            get_activities_between,
             accessibility_granted,
             request_accessibility,
         ])

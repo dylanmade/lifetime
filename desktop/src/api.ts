@@ -106,3 +106,37 @@ export const isAccessibilityGranted = (): Promise<boolean> =>
 
 export const requestAccessibility = (): Promise<boolean> =>
   invoke("request_accessibility");
+
+export type ThemeProfileSummary = {
+  id: string;
+  name: string;
+  updated_at: string;
+};
+
+export type ThemeProfile = {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  data: string;
+};
+
+export const listThemeProfiles = (): Promise<ThemeProfileSummary[]> =>
+  invoke("list_theme_profiles");
+
+export const getThemeProfile = (id: string): Promise<ThemeProfile | null> =>
+  invoke("get_theme_profile", { id });
+
+export const createThemeProfile = (
+  name: string,
+  data: string,
+): Promise<ThemeProfile> => invoke("create_theme_profile", { name, data });
+
+export const updateThemeProfile = (
+  id: string,
+  name: string,
+  data: string,
+): Promise<ThemeProfile> => invoke("update_theme_profile", { id, name, data });
+
+export const deleteThemeProfile = (id: string): Promise<void> =>
+  invoke("delete_theme_profile", { id });

@@ -11,6 +11,7 @@ use lifetime_core::model::{
     Activity, ActivityKind, ManualActivity, Observation, ObservationKind,
 };
 use lifetime_core::storage::{self, Store};
+use lifetime_core::theme::{ThemeProfile, ThemeProfileSummary};
 use lifetime_crypto::{MasterKey, RecoveryFile, SealedVault, vault as crypto_vault};
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -370,6 +371,84 @@ fn get_timeline_segments(
     ))
 }
 
+#[tauri::command]
+fn list_theme_profiles(
+    ctx: State<Arc<AppContext>>,
+) -> Result<Vec<ThemeProfileSummary>, String> {
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    store.list_theme_profiles().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_theme_profile(
+    ctx: State<Arc<AppContext>>,
+    id: String,
+) -> Result<Option<ThemeProfile>, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    store.get_theme_profile(uuid).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_theme_profile(
+    ctx: State<Arc<AppContext>>,
+    name: String,
+    data: String,
+) -> Result<ThemeProfile, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    let now = OffsetDateTime::now_utc();
+    let profile = ThemeProfile {
+        id: Uuid::now_v7(),
+        name,
+        created_at: now,
+        updated_at: now,
+        data,
+    };
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    store
+        .insert_theme_profile(&profile)
+        .map_err(|e| e.to_string())?;
+    Ok(profile)
+}
+
+#[tauri::command]
+fn update_theme_profile(
+    ctx: State<Arc<AppContext>>,
+    id: String,
+    name: String,
+    data: String,
+) -> Result<ThemeProfile, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    let now = OffsetDateTime::now_utc();
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    store
+        .update_theme_profile(uuid, &name, &data, now)
+        .map_err(|e| e.to_string())?;
+    store
+        .get_theme_profile(uuid)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "profile vanished after update".to_string())
+}
+
+#[tauri::command]
+fn delete_theme_profile(ctx: State<Arc<AppContext>>, id: String) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    store.delete_theme_profile(uuid).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -415,6 +494,11 @@ pub fn run() {
             get_activities_between,
             accessibility_granted,
             request_accessibility,
+            list_theme_profiles,
+            get_theme_profile,
+            create_theme_profile,
+            update_theme_profile,
+            delete_theme_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

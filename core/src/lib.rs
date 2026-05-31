@@ -7,3 +7,4 @@ pub mod aggregate;
 pub mod lww;
 pub mod model;
 pub mod storage;
+pub mod theme;

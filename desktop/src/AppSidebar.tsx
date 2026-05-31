@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3,
   Hourglass,
+  Palette,
   Settings as SettingsIcon,
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -26,6 +27,7 @@ type NavItem = {
 const ITEMS: NavItem[] = [
   { to: "/", label: "Summary", icon: BarChart3, end: true },
   { to: "/timeline", label: "Timeline", icon: Activity },
+  { to: "/appearance", label: "Appearance", icon: Palette },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 

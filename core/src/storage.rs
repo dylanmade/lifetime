@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::model::{
     Activity, ActivityKind, Annotation, AnnotationTarget, Observation, ObservationKind,
 };
+use crate::theme::{ThemeProfile, ThemeProfileSummary};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -223,6 +224,78 @@ impl Store {
         Ok(())
     }
 
+    pub fn list_theme_profiles(&self) -> Result<Vec<ThemeProfileSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, updated_at FROM theme_profiles ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ThemeProfileSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_theme_profile(&self, id: Uuid) -> Result<Option<ThemeProfile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, created_at, updated_at, data FROM theme_profiles WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(ThemeProfile {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+                data: row.get(4)?,
+            })
+        })?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert_theme_profile(&self, profile: &ThemeProfile) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO theme_profiles (id, name, created_at, updated_at, data)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                profile.id,
+                profile.name,
+                profile.created_at,
+                profile.updated_at,
+                profile.data,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_theme_profile(
+        &self,
+        id: Uuid,
+        name: &str,
+        data: &str,
+        updated_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE theme_profiles SET name = ?1, data = ?2, updated_at = ?3 WHERE id = ?4",
+            params![name, data, updated_at, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_theme_profile(&self, id: Uuid) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM theme_profiles WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     pub fn annotations_for(&self, target: &AnnotationTarget) -> Result<Vec<Annotation>> {
         let (target_kind, target_id) = annotation_target_parts(target);
         let mut stmt = self.conn.prepare(
@@ -269,7 +342,7 @@ fn apply_key(conn: &Connection, key: &[u8]) -> Result<()> {
 
 /// Copy every record from `source` into `dest`. Used by the opt-in encryption
 /// flow to convert plaintext ↔ encrypted stores. Insertion order is
-/// observations, activities, then annotations.
+/// observations, activities, annotations, then theme profiles.
 pub fn migrate(source: &Store, dest: &Store) -> Result<()> {
     for obs in source.all_observations()? {
         dest.insert_observation(&obs)?;
@@ -279,6 +352,11 @@ pub fn migrate(source: &Store, dest: &Store) -> Result<()> {
     }
     for ann in source.all_annotations()? {
         dest.insert_annotation(&ann)?;
+    }
+    for summary in source.list_theme_profiles()? {
+        if let Some(profile) = source.get_theme_profile(summary.id)? {
+            dest.insert_theme_profile(&profile)?;
+        }
     }
     Ok(())
 }
@@ -345,6 +423,14 @@ CREATE INDEX IF NOT EXISTS idx_annotations_target
     ON annotations(target_kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_target_field
     ON annotations(target_kind, target_id, field);
+
+CREATE TABLE IF NOT EXISTS theme_profiles (
+    id BLOB PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
 "#;
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ import { AppSidebar } from "./AppSidebar";
 import { Summary } from "./Summary";
 import { Timeline } from "./Timeline";
 import { Settings } from "./Settings";
+import { Appearance } from "./Appearance";
 import { UnlockModal } from "./UnlockModal";
 
 function App() {
@@ -22,18 +23,6 @@ function App() {
       .then(setAppState)
       .catch(() => setAppState(null));
   };
-
-  // Mirror OS dark-mode preference onto the document root so shadcn
-  // tokens switch correctly.
-  useEffect(() => {
-    const mql = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      document.documentElement.classList.toggle("dark", mql.matches);
-    };
-    apply();
-    mql.addEventListener("change", apply);
-    return () => mql.removeEventListener("change", apply);
-  }, []);
 
   useEffect(() => {
     refresh();
@@ -76,6 +65,7 @@ function App() {
                       <Settings appState={appState} onStateChanged={refresh} />
                     }
                   />
+                  <Route path="/appearance" element={<Appearance />} />
                 </Routes>
               </div>
             </main>

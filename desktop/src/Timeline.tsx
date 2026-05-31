@@ -125,10 +125,7 @@ export function Timeline() {
   const zoomRef = useRef(zoom);
   const pendingSyncRef = useRef(false);
 
-  const isToday = useMemo(
-    () => isSameDay(selectedDate, new Date()),
-    [selectedDate],
-  );
+  const isToday = isSameDay(selectedDate, new Date());
 
   useEffect(() => {
     let cancelled = false;
@@ -171,11 +168,14 @@ export function Timeline() {
     };
   }, [selectedDate, isToday]);
 
-  // Reset horizontal scroll when the day changes so we don't carry over an
-  // unrelated viewport offset.
-  useEffect(() => {
+  // Single entry point for changing the selected day. Resets scroll alongside
+  // the state update so we don't carry over an unrelated viewport offset.
+  // (Per React docs: this kind of "in response to an event" logic belongs in
+  // the event handler, not an effect.)
+  function selectDay(date: Date) {
+    setSelectedDate(startOfDay(date));
     if (scrollRef.current) scrollRef.current.scrollLeft = 0;
-  }, [selectedDate]);
+  }
 
   // Apply a zoom factor while keeping the time under `focalScreenX` fixed in
   // place. Writes to the DOM directly (no React round-trip per gesture event)
@@ -287,7 +287,86 @@ export function Timeline() {
     return result;
   }, [zoom]);
 
-  const completedActivities = activities.filter((a) => a.ends_at);
+  // Stable reference across renders so the block memos below don't invalidate
+  // every render.
+  const completedActivities = useMemo(
+    () => activities.filter((a) => a.ends_at),
+    [activities],
+  );
+
+  // Memoized rendered block arrays. Crucially these do NOT depend on `zoom` —
+  // each block is positioned by `left:%` / `width:%` within the inner div, so
+  // when zoom changes the inner div widens and percentages scale naturally.
+  // React reuses these JSX nodes across zoom-triggered renders, skipping the
+  // .map(), positionInDay() calls, and Tooltip reconciliation.
+  const activityBlocks = useMemo(
+    () =>
+      completedActivities.map((a) => {
+        const { leftPct, widthPct } = positionInDay(
+          a.starts_at,
+          a.ends_at!,
+          selectedDate,
+        );
+        if (widthPct === 0) return null;
+        return (
+          <Tooltip key={a.id}>
+            <TooltipTrigger asChild>
+              <div
+                className="bg-primary/70 text-primary-foreground hover:bg-primary absolute top-0 flex h-full cursor-default items-center overflow-hidden rounded px-1.5 text-[10px] transition-colors"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+              >
+                <span className="truncate">{a.title ?? "(untitled)"}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="font-medium">{a.title ?? "(untitled)"}</div>
+              <div className="text-muted-foreground">
+                {formatTime(a.starts_at)} – {formatTime(a.ends_at!)}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      }),
+    [completedActivities, selectedDate],
+  );
+
+  const segmentBlocks = useMemo(
+    () =>
+      segments.map((s, i) => {
+        const { leftPct, widthPct } = positionInDay(
+          s.starts_at,
+          s.ends_at,
+          selectedDate,
+        );
+        if (widthPct === 0) return null;
+        const durSeconds =
+          (new Date(s.ends_at).getTime() - new Date(s.starts_at).getTime()) /
+          1000;
+        return (
+          <Tooltip key={i}>
+            <TooltipTrigger asChild>
+              <div
+                className="border-background/30 absolute top-0 h-full cursor-default border-r last:border-r-0"
+                style={{
+                  left: `${leftPct}%`,
+                  width: `${widthPct}%`,
+                  backgroundColor: appColor(s.app_name, s.is_active),
+                }}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="font-medium">{s.app_name}</div>
+              <div className="text-muted-foreground">
+                {formatTime(s.starts_at)} – {formatTime(s.ends_at)} ·{" "}
+                {formatDuration(durSeconds)}
+                {!s.is_active && " · idle"}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      }),
+    [segments, selectedDate],
+  );
 
   return (
     <div className="space-y-6">
@@ -299,7 +378,7 @@ export function Timeline() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setSelectedDate(addDays(selectedDate, -1))}
+            onClick={() => selectDay(addDays(selectedDate, -1))}
             aria-label="Previous day"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -321,7 +400,7 @@ export function Timeline() {
                 selected={selectedDate}
                 onSelect={(date) => {
                   if (date) {
-                    setSelectedDate(startOfDay(date));
+                    selectDay(date);
                     setCalendarOpen(false);
                   }
                 }}
@@ -332,9 +411,7 @@ export function Timeline() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() =>
-              !isToday && setSelectedDate(addDays(selectedDate, 1))
-            }
+            onClick={() => !isToday && selectDay(addDays(selectedDate, 1))}
             disabled={isToday}
             aria-label="Next day"
           >
@@ -403,39 +480,7 @@ export function Timeline() {
             >
               {completedActivities.length > 0 && (
                 <div className="bg-muted/30 relative h-6 rounded">
-                  {completedActivities.map((a) => {
-                    const { leftPct, widthPct } = positionInDay(
-                      a.starts_at,
-                      a.ends_at!,
-                      selectedDate,
-                    );
-                    if (widthPct === 0) return null;
-                    return (
-                      <Tooltip key={a.id}>
-                        <TooltipTrigger asChild>
-                          <div
-                            className="bg-primary/70 text-primary-foreground hover:bg-primary absolute top-0 flex h-full cursor-default items-center overflow-hidden rounded px-1.5 text-[10px] transition-colors"
-                            style={{
-                              left: `${leftPct}%`,
-                              width: `${widthPct}%`,
-                            }}
-                          >
-                            <span className="truncate">
-                              {a.title ?? "(untitled)"}
-                            </span>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <div className="font-medium">
-                            {a.title ?? "(untitled)"}
-                          </div>
-                          <div className="text-muted-foreground">
-                            {formatTime(a.starts_at)} – {formatTime(a.ends_at!)}
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
-                    );
-                  })}
+                  {activityBlocks}
                   {nowPct !== null && (
                     <div
                       className="bg-foreground pointer-events-none absolute top-0 h-full w-px"
@@ -446,40 +491,7 @@ export function Timeline() {
               )}
 
               <div className="bg-muted/30 relative h-12 rounded">
-                {segments.map((s, i) => {
-                  const { leftPct, widthPct } = positionInDay(
-                    s.starts_at,
-                    s.ends_at,
-                    selectedDate,
-                  );
-                  if (widthPct === 0) return null;
-                  const durSeconds =
-                    (new Date(s.ends_at).getTime() -
-                      new Date(s.starts_at).getTime()) /
-                    1000;
-                  return (
-                    <Tooltip key={i}>
-                      <TooltipTrigger asChild>
-                        <div
-                          className="border-background/30 absolute top-0 h-full cursor-default border-r last:border-r-0"
-                          style={{
-                            left: `${leftPct}%`,
-                            width: `${widthPct}%`,
-                            backgroundColor: appColor(s.app_name, s.is_active),
-                          }}
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <div className="font-medium">{s.app_name}</div>
-                        <div className="text-muted-foreground">
-                          {formatTime(s.starts_at)} – {formatTime(s.ends_at)} ·{" "}
-                          {formatDuration(durSeconds)}
-                          {!s.is_active && " · idle"}
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                })}
+                {segmentBlocks}
                 {nowPct !== null && (
                   <div
                     className="bg-foreground pointer-events-none absolute top-0 h-full w-px"

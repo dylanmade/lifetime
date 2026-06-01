@@ -45,7 +45,7 @@ export function ColorInput({ token, label }: Props) {
             aria-label={`Reset ${label}`}
             title="Reset to default"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
+            <RotateCcw className="size-3.5" />
           </Button>
         )}
         <Popover>

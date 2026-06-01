@@ -123,7 +123,7 @@ export function FontPicker({ value, bundled, monoOnly, onChange }: Props) {
         <span className="truncate" style={{ fontFamily: selectedItem?.stack }}>
           {triggerLabel}
         </span>
-        <ChevronDown className="text-muted-foreground ml-2 h-4 w-4 shrink-0" />
+        <ChevronDown className="text-muted-foreground size-4 shrink-0" />
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="gap-0 p-0 sm:max-w-md">
@@ -215,7 +215,7 @@ function FontItemRow({
     >
       <Check
         className={cn(
-          "h-4 w-4 shrink-0",
+          "size-4 shrink-0",
           selected ? "opacity-100" : "opacity-0",
         )}
       />

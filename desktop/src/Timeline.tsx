@@ -1,20 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  CalendarIcon,
-  ChevronLeft,
-  ChevronRight,
-  Minus,
-  Plus,
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Minus, Plus } from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { SectionLabel } from "@/components/section-label";
+import { DayNavHeader } from "@/components/day-nav-header";
 import {
   Tooltip,
   TooltipContent,
@@ -28,7 +18,6 @@ import {
 } from "./api";
 import {
   addDays,
-  formatDayLabel,
   formatDuration,
   formatTime,
   isSameDay,
@@ -115,7 +104,6 @@ export function Timeline() {
   const [segments, setSegments] = useState<AppSegment[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [zoom, setZoom] = useState(1);
 
@@ -370,55 +358,7 @@ export function Timeline() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {formatDayLabel(selectedDate)}
-        </h1>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => selectDay(addDays(selectedDate, -1))}
-            aria-label="Previous day"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="font-normal">
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {selectedDate.toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="single"
-                selected={selectedDate}
-                onSelect={(date) => {
-                  if (date) {
-                    selectDay(date);
-                    setCalendarOpen(false);
-                  }
-                }}
-                disabled={(date) => date > new Date()}
-              />
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => !isToday && selectDay(addDays(selectedDate, 1))}
-            disabled={isToday}
-            aria-label="Next day"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+      <DayNavHeader selectedDate={selectedDate} onSelectDate={selectDay} />
 
       <p className="text-muted-foreground text-sm">
         {formatDuration(totalActive)} active across {segments.length} segment
@@ -433,9 +373,7 @@ export function Timeline() {
 
       <Card ref={cardRef}>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Day at a glance
-          </CardTitle>
+          <SectionLabel>Day at a glance</SectionLabel>
           <div className="flex items-center gap-0.5">
             <Button
               variant="ghost"
@@ -444,7 +382,7 @@ export function Timeline() {
               disabled={zoom <= MIN_ZOOM}
               aria-label="Zoom out"
             >
-              <Minus className="h-4 w-4" />
+              <Minus />
             </Button>
             <Button
               variant="ghost"
@@ -463,7 +401,7 @@ export function Timeline() {
               disabled={zoom >= MAX_ZOOM}
               aria-label="Zoom in"
             >
-              <Plus className="h-4 w-4" />
+              <Plus />
             </Button>
           </div>
         </CardHeader>

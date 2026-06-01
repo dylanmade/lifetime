@@ -1,8 +1,13 @@
-import { useState } from "react";
 import { ChevronDown, Monitor, Moon, RotateCcw, Sun } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { SectionLabel } from "@/components/section-label";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { ColorInput } from "@/theme/ColorInput";
 import { FontPicker } from "@/theme/FontPicker";
 import { ProfileSection } from "@/theme/ProfileSection";
@@ -49,7 +54,7 @@ export function Appearance() {
           </p>
         </div>
         <Button variant="outline" onClick={reset}>
-          <RotateCcw className="mr-2 h-4 w-4" />
+          <RotateCcw />
           Reset all
         </Button>
       </div>
@@ -58,9 +63,7 @@ export function Appearance() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Mode
-          </CardTitle>
+          <SectionLabel>Mode</SectionLabel>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
@@ -70,7 +73,7 @@ export function Appearance() {
                 variant={mode === value ? "default" : "outline"}
                 onClick={() => setMode(value)}
               >
-                <Icon className="mr-2 h-4 w-4" />
+                <Icon />
                 {label}
               </Button>
             ))}
@@ -80,9 +83,7 @@ export function Appearance() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Typography
-          </CardTitle>
+          <SectionLabel>Typography</SectionLabel>
         </CardHeader>
         <CardContent className="space-y-4">
           <FontRow label="Sans (body)">
@@ -112,9 +113,7 @@ export function Appearance() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Shape
-          </CardTitle>
+          <SectionLabel>Shape</SectionLabel>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between gap-4 py-1">
@@ -142,29 +141,21 @@ export function Appearance() {
 }
 
 function ColorSection({ group }: { group: (typeof COLOR_GROUPS)[number] }) {
-  const [open, setOpen] = useState(group.defaultOpen);
   return (
     <Card className="gap-0 overflow-hidden py-0">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="hover:bg-muted/40 flex w-full items-center justify-between px-5 py-4 text-left transition-colors"
-        aria-expanded={open}
-      >
-        <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          {group.name}
-        </span>
-        <ChevronDown
-          className={`text-muted-foreground h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && (
-        <div className="divide-border border-border divide-y border-t px-5 py-2">
-          {group.tokens.map((t) => (
-            <ColorInput key={t.id} token={t.id} label={t.label} />
-          ))}
-        </div>
-      )}
+      <Collapsible defaultOpen={group.defaultOpen}>
+        <CollapsibleTrigger className="hover:bg-muted/40 flex w-full items-center justify-between px-5 py-4 text-left transition-colors [&[data-state=open]>svg]:rotate-180">
+          <SectionLabel>{group.name}</SectionLabel>
+          <ChevronDown className="text-muted-foreground size-4 transition-transform" />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="divide-border border-border divide-y border-t px-5 py-2">
+            {group.tokens.map((t) => (
+              <ColorInput key={t.id} token={t.id} label={t.label} />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </Card>
   );
 }
@@ -177,7 +168,7 @@ function FontRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-center justify-between gap-3 py-1">
       <span className="text-sm">{label}</span>
       {children}
     </div>

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Spinner } from "@/components/ui/spinner";
 import { enableEncryption } from "./api";
 
 type Props = {
@@ -147,7 +148,7 @@ export function EnableEncryption({ open, onOpenChange, onCompleted }: Props) {
               </DialogDescription>
             </DialogHeader>
             <div className="flex items-center justify-center py-4">
-              <div className="border-primary h-6 w-6 animate-spin rounded-full border-2 border-t-transparent" />
+              <Spinner className="text-primary size-6" />
             </div>
           </>
         )}

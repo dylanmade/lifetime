@@ -48,7 +48,7 @@ export function UnlockModal({ fingerprint, onUnlocked }: Props) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Lock className="h-4 w-4" /> Lifetime is locked
+            <Lock className="size-4" /> Lifetime is locked
           </DialogTitle>
           <DialogDescription>
             Enter your passphrase to unlock your data.

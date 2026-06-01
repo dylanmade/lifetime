@@ -49,9 +49,9 @@ export function Settings({ appState, onStateChanged }: Props) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             {isEncrypted ? (
-              <ShieldCheck className="text-primary h-4 w-4" />
+              <ShieldCheck className="text-primary size-4" />
             ) : (
-              <Lock className="text-muted-foreground h-4 w-4" />
+              <Lock className="text-muted-foreground size-4" />
             )}
             Security
           </CardTitle>
@@ -88,7 +88,7 @@ export function Settings({ appState, onStateChanged }: Props) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Eye className="text-muted-foreground h-4 w-4" />
+            <Eye className="text-muted-foreground size-4" />
             Tracking
           </CardTitle>
           <CardDescription>

@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarIcon, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Plus } from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { SectionLabel } from "@/components/section-label";
+import { DayNavHeader } from "@/components/day-nav-header";
 import {
   Tooltip,
   TooltipContent,
@@ -25,7 +21,6 @@ import {
 import { LogActivity } from "./LogActivity";
 import {
   addDays,
-  formatDayLabel,
   formatDuration,
   formatTimeRange,
   isSameDay,
@@ -48,7 +43,6 @@ export function Summary() {
   const [error, setError] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [calendarOpen, setCalendarOpen] = useState(false);
 
   const isToday = useMemo(
     () => isSameDay(selectedDate, new Date()),
@@ -100,57 +94,10 @@ export function Summary() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {formatDayLabel(selectedDate)}
-        </h1>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSelectedDate(addDays(selectedDate, -1))}
-            aria-label="Previous day"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="font-normal">
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {selectedDate.toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="single"
-                selected={selectedDate}
-                onSelect={(date) => {
-                  if (date) {
-                    setSelectedDate(startOfDay(date));
-                    setCalendarOpen(false);
-                  }
-                }}
-                disabled={(date) => date > new Date()}
-              />
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() =>
-              !isToday && setSelectedDate(addDays(selectedDate, 1))
-            }
-            disabled={isToday}
-            aria-label="Next day"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+      <DayNavHeader
+        selectedDate={selectedDate}
+        onSelectDate={(date) => setSelectedDate(startOfDay(date))}
+      />
 
       <p className="text-muted-foreground text-sm">
         {formatDuration(totalActive)} active across {totals.length} app
@@ -175,9 +122,7 @@ export function Summary() {
         {hasAnyHourly && (
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-                By hour
-              </CardTitle>
+              <SectionLabel>By hour</SectionLabel>
             </CardHeader>
             <CardContent>
               <div className="relative flex h-20 items-end gap-0.5 pb-5">
@@ -213,9 +158,7 @@ export function Summary() {
         {totals.length > 0 && (
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-                By app
-              </CardTitle>
+              <SectionLabel>By app</SectionLabel>
             </CardHeader>
             <CardContent>
               <ul className="space-y-3">
@@ -244,9 +187,7 @@ export function Summary() {
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-              Activities
-            </CardTitle>
+            <SectionLabel>Activities</SectionLabel>
           </CardHeader>
           <CardContent className="space-y-3">
             {activities.length === 0 ? (
@@ -282,7 +223,7 @@ export function Summary() {
               size="sm"
               onClick={() => setShowLog(true)}
             >
-              <Plus className="h-4 w-4" />
+              <Plus />
               Log activity
             </Button>
           </CardContent>

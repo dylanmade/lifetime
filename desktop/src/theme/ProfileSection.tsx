@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Save, Trash2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { SectionLabel } from "@/components/section-label";
 import {
   Select,
   SelectContent,
@@ -44,9 +45,7 @@ export function ProfileSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Profile
-        </CardTitle>
+        <SectionLabel>Profile</SectionLabel>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -92,7 +91,7 @@ export function ProfileSection() {
               onClick={() => saveActiveProfile().catch(() => {})}
               disabled={!isDirty}
             >
-              <Save className="mr-2 h-4 w-4" />
+              <Save />
               Save
             </Button>
           )}
@@ -101,7 +100,7 @@ export function ProfileSection() {
             variant="outline"
             onClick={() => setSaveAsOpen(true)}
           >
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus />
             Save as new
           </Button>
           {activeProfileId && (
@@ -111,7 +110,7 @@ export function ProfileSection() {
                 variant="outline"
                 onClick={() => setRenameOpen(true)}
               >
-                <Pencil className="mr-2 h-4 w-4" />
+                <Pencil />
                 Rename
               </Button>
               <Button
@@ -120,7 +119,7 @@ export function ProfileSection() {
                 onClick={() => setConfirmDeleteOpen(true)}
                 className="text-destructive hover:text-destructive"
               >
-                <Trash2 className="mr-2 h-4 w-4" />
+                <Trash2 />
                 Delete
               </Button>
             </>

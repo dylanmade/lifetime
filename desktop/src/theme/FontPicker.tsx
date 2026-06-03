@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -126,11 +127,31 @@ export function FontPicker({ value, bundled, monoOnly, onChange }: Props) {
         <ChevronDown className="text-muted-foreground size-4 shrink-0" />
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="gap-0 p-0 sm:max-w-md">
-          <DialogHeader className="p-4 pb-2">
-            <DialogTitle>Choose font</DialogTitle>
-          </DialogHeader>
-          <div className="px-4 pb-3">
+        <DialogContent
+          showCloseButton={false}
+          className="gap-0 p-0 sm:max-w-md"
+        >
+          {/* Content is full-bleed (p-0) so the virtualized list and its
+              border-t dividers span edge to edge. The header + search live in
+              one padded block (p-4, space-y-3) so they aren't crowded. The
+              default close button is absolutely positioned for a p-6 dialog and
+              sits low against this tighter header, so we disable it and render
+              the close button inline in the header row, centered with the
+              title. */}
+          <div className="space-y-3 p-4">
+            <DialogHeader className="flex-row items-center justify-between">
+              <DialogTitle>Choose font</DialogTitle>
+              <DialogClose asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="bg-secondary -my-1"
+                  aria-label="Close"
+                >
+                  <XIcon />
+                </Button>
+              </DialogClose>
+            </DialogHeader>
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -141,7 +162,7 @@ export function FontPicker({ value, bundled, monoOnly, onChange }: Props) {
             />
           </div>
           {filteredItems.length === 0 ? (
-            <div className="text-muted-foreground border-t p-6 text-center text-sm">
+            <div className="text-muted-foreground border-t p-4 text-center text-sm">
               No fonts found.
             </div>
           ) : (

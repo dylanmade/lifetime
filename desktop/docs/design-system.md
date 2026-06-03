@@ -110,6 +110,7 @@ This is where drift shows up most. Use these and only these for each context:
 | ---------------------------------------- | ----------------------------------------- |
 | Page root vertical stack                 | `space-y-6`                               |
 | Multi-card grid gap                      | `gap-6`                                   |
+| Title + subtitle/description group       | `space-y-1`                               |
 | Inside a card: content blocks            | `space-y-4` (forms) / `space-y-3` (lists) |
 | Form field group (label + control)       | `space-y-1.5`                             |
 | Row of buttons                           | `gap-2`                                   |
@@ -117,8 +118,54 @@ This is where drift shows up most. Use these and only these for each context:
 | Icon + text inside a heading/label       | `gap-2`                                   |
 | List item internal label/value           | `gap-3` / `gap-4`                         |
 
+**Adjacent block elements have no margin** (Tailwind resets it), so a heading and
+the line under it will _touch_ unless their wrapper sets spacing. Any time you stack
+a title over a subtitle/description, wrap them and apply `space-y-1` — never leave
+two bare blocks adjacent. (This bit us on the Appearance page title/subtitle.)
+
 Card internal padding (`px-5`/`py-5`, `sm` → 4) is owned by the `Card` primitive —
 **do not** add your own padding to `CardContent`; change the card `size` instead.
+
+### Density — don't render lists of small controls as full-width single rows
+
+A list of small controls (swatches, toggles, short label+value pairs) laid out as
+full-width single-column rows in a wide container wastes the horizontal middle — the
+label hugs the left, the control hugs the right, and a lane of dead space sits between
+them. In a ~1100px-wide page that's a lot of empty UI. Instead, make each item a
+compact self-contained tile (`[control] label`) and flow them into a **responsive
+grid**. Prefer an auto-fill track so columns reflow on resize without breakpoint
+guesswork:
+
+```
+grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-x-6 gap-y-2.5
+```
+
+Reference: the Appearance color editor (`ColorInput` tile + the grid in
+`Appearance.tsx`'s `ColorSection`). Reserve full-width rows for items that genuinely
+need the width (a label + a wide input, a row with trailing actions).
+
+### Dialog padding — let the primitive own it; if you go full-bleed, re-pad in one block
+
+`DialogContent` ships `p-6` + `gap-6` (sections) and `DialogHeader` ships `gap-1.5`
+(title/description). Use those defaults — don't sprinkle ad-hoc `p-4 pb-2` / `px-4
+pb-3` on the pieces. The only reason to override to `p-0`/`gap-0` is a **full-bleed**
+child (e.g. a virtualized list whose `border-t` dividers and hover rows must span
+edge to edge — see `FontPicker.tsx`). When you do that, don't re-pad each piece
+individually: wrap the non-bleed content (header + search) in **one** padded block
+(`p-4 space-y-3`) so its rhythm stays internally consistent. The full-bleed child
+stays flush.
+
+**Watch the close button on a full-bleed dialog.** `DialogContent`'s default close
+button is `absolute top-4 right-4` — calibrated for the standard `p-6` content (title
+at 24px, button tucked into the corner above it). In a tighter re-padded header
+(`p-4`) the title also sits at 16px, so the absolute button lands _level with and a
+hair below_ the title instead of aligned to it. For these dialogs, pass
+`showCloseButton={false}` and render the close button **inline** in the header row
+instead: make `DialogHeader` a `flex-row items-center justify-between`, with the
+`DialogTitle` and a `<DialogClose asChild>`-wrapped `Button` (`variant="ghost"
+size="icon-sm" className="bg-secondary -my-1"`) as siblings. Inline + `items-center`
+guarantees the button is vertically centered on the title regardless of padding.
+Reference: `FontPicker.tsx`.
 
 ---
 

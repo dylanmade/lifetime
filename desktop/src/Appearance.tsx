@@ -45,7 +45,7 @@ export function Appearance() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Appearance</h1>
           <p className="text-muted-foreground text-sm">
             Editing{" "}
@@ -149,7 +149,10 @@ function ColorSection({ group }: { group: (typeof COLOR_GROUPS)[number] }) {
           <ChevronDown className="text-muted-foreground size-4 transition-transform" />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="divide-border border-border divide-y border-t px-5 py-2">
+          {/* Auto-fill grid: packs as many ~190px swatch tiles per row as the
+              card width allows, so groups stay compact instead of one tall
+              full-width column. Columns reflow on resize without breakpoints. */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-x-6 gap-y-2.5 border-t px-5 py-4">
             {group.tokens.map((t) => (
               <ColorInput key={t.id} token={t.id} label={t.label} />
             ))}

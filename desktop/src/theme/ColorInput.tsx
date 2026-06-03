@@ -33,52 +33,52 @@ export function ColorInput({ token, label }: Props) {
   }, [activeMode, isOverridden, overrides.colors, token]);
 
   return (
-    <div className="flex items-center justify-between gap-3 py-1">
-      <span className="text-sm">{label}</span>
-      <div className="flex items-center gap-1">
-        {isOverridden && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => clearColor(token)}
-            aria-label={`Reset ${label}`}
-            title="Reset to default"
-          >
-            <RotateCcw className="size-3.5" />
-          </Button>
-        )}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="border-border ring-offset-background focus-visible:ring-ring h-8 w-14 rounded-md border focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
-              style={{ backgroundColor: display }}
-              aria-label={`Edit ${label}`}
-            />
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-3" align="end">
-            <HexColorPicker
-              color={display}
-              onChange={(next) => setColor(token, next)}
-            />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="text-muted-foreground font-mono text-xs uppercase">
-                {display}
-              </span>
-              {isOverridden && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => clearColor(token)}
-                >
-                  Reset
-                </Button>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
+    <div className="flex items-center gap-2.5">
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="border-border ring-offset-background focus-visible:ring-ring size-8 shrink-0 rounded-md border focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+            style={{ backgroundColor: display }}
+            aria-label={`Edit ${label}`}
+          />
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-3" align="start">
+          <HexColorPicker
+            color={display}
+            onChange={(next) => setColor(token, next)}
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-muted-foreground font-mono text-xs uppercase">
+              {display}
+            </span>
+            {isOverridden && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => clearColor(token)}
+              >
+                Reset
+              </Button>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+      <span className="min-w-0 flex-1 truncate text-sm" title={label}>
+        {label}
+      </span>
+      {isOverridden && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-muted-foreground shrink-0"
+          onClick={() => clearColor(token)}
+          aria-label={`Reset ${label}`}
+          title="Reset to default"
+        >
+          <RotateCcw />
+        </Button>
+      )}
     </div>
   );
 }

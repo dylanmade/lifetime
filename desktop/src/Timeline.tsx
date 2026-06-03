@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { ChevronFirst, ChevronLast, Minus, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -30,6 +30,9 @@ const DAY_SECONDS = 24 * 3600;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 96; // 15-minute window
 const BUTTON_ZOOM_FACTOR = 1.5;
+
+// Quick-zoom presets, in hours of visible window. zoom = 24 / windowHours.
+const QUICK_WINDOW_HOURS = [1, 3, 6, 12, 24];
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -233,6 +236,24 @@ export function Timeline() {
     applyZoom(container.clientWidth / 2, zoomRef.current * factor);
   }
 
+  // Jump to a preset window width, keeping the center of the current view fixed.
+  function zoomToWindow(hours: number) {
+    const container = scrollRef.current;
+    if (!container) return;
+    applyZoom(container.clientWidth / 2, 24 / hours);
+  }
+
+  // Pan the (zoomed) timeline to its far edges. No-op at zoom 1 since there's
+  // no horizontal overflow — the buttons are disabled there.
+  function jumpToStart() {
+    scrollRef.current?.scrollTo({ left: 0, behavior: "smooth" });
+  }
+
+  function jumpToEnd() {
+    const c = scrollRef.current;
+    if (c) c.scrollTo({ left: c.scrollWidth, behavior: "smooth" });
+  }
+
   function resetZoom() {
     const container = scrollRef.current;
     const inner = innerRef.current;
@@ -374,35 +395,85 @@ export function Timeline() {
       <Card ref={cardRef}>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <SectionLabel>Day at a glance</SectionLabel>
-          <div className="flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => zoomFromButton(1 / BUTTON_ZOOM_FACTOR)}
-              disabled={zoom <= MIN_ZOOM}
-              aria-label="Zoom out"
-            >
-              <Minus />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={resetZoom}
-              className="min-w-14 tabular-nums"
-              aria-label="Reset zoom"
-              title="Reset zoom"
-            >
-              {formatWindow(zoom)}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => zoomFromButton(BUTTON_ZOOM_FACTOR)}
-              disabled={zoom >= MAX_ZOOM}
-              aria-label="Zoom in"
-            >
-              <Plus />
-            </Button>
+          <div className="flex items-center gap-2">
+            {/* Pan: jump to the start / end of the (zoomed) day */}
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={jumpToStart}
+                disabled={zoom <= MIN_ZOOM}
+                aria-label="Jump to start"
+                title="Jump to start (00:00)"
+              >
+                <ChevronFirst />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={jumpToEnd}
+                disabled={zoom <= MIN_ZOOM}
+                aria-label="Jump to end"
+                title="Jump to end"
+              >
+                <ChevronLast />
+              </Button>
+            </div>
+
+            {/* Quick-zoom presets; the one matching the current window fills in */}
+            <div className="flex items-center gap-0.5">
+              {QUICK_WINDOW_HOURS.map((h) => {
+                const active = Math.abs(windowHours(zoom) - h) < 0.01;
+                return (
+                  <Button
+                    key={h}
+                    variant={active ? "default" : "outline"}
+                    size="sm"
+                    className="tabular-nums"
+                    onClick={() => zoomToWindow(h)}
+                    aria-label={`Zoom to ${h}-hour window`}
+                  >
+                    {h}h
+                  </Button>
+                );
+              })}
+            </div>
+
+            {/* Main zoom control: a segmented −/window/+ module, bordered as one
+                unit so it reads as the primary zoom representation. The center
+                shows the live window and resets to the full day on click. */}
+            <div className="divide-border flex items-center divide-x overflow-hidden rounded-lg border">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-none border-0"
+                onClick={() => zoomFromButton(1 / BUTTON_ZOOM_FACTOR)}
+                disabled={zoom <= MIN_ZOOM}
+                aria-label="Zoom out"
+              >
+                <Minus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="min-w-14 rounded-none border-0 tabular-nums"
+                onClick={resetZoom}
+                aria-label="Reset zoom"
+                title="Reset zoom"
+              >
+                {formatWindow(zoom)}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-none border-0"
+                onClick={() => zoomFromButton(BUTTON_ZOOM_FACTOR)}
+                disabled={zoom >= MAX_ZOOM}
+                aria-label="Zoom in"
+              >
+                <Plus />
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

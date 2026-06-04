@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/tooltip";
 import { type ResolvedActivity, getActivitiesBetween } from "./api";
 import { ActivityDetail } from "./ActivityDetail";
+import { LogActivity } from "./LogActivity";
 import {
   addDays,
   formatDuration,
@@ -29,6 +30,14 @@ const BUTTON_ZOOM_FACTOR = 1.5;
 
 // Quick-zoom presets, in hours of visible window. zoom = 24 / windowHours.
 const QUICK_WINDOW_HOURS = [1, 3, 6, 12, 24];
+
+// Hover-to-add ghost on the manual lane: a snapped empty slot under the cursor.
+type GhostSpan = {
+  leftPct: number;
+  widthPct: number;
+  start: Date;
+  end: Date;
+};
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -102,6 +111,13 @@ export function Timeline() {
   );
   const [activities, setActivities] = useState<ResolvedActivity[]>([]);
   const [selected, setSelected] = useState<ResolvedActivity | null>(null);
+  const [ghost, setGhost] = useState<GhostSpan | null>(null);
+  const [addSpan, setAddSpan] = useState<{ start: Date; end: Date } | null>(
+    null,
+  );
+  const [addOpen, setAddOpen] = useState(false);
+  // Bumped on each open so the add dialog remounts with fresh pre-filled times.
+  const [addKey, setAddKey] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -301,6 +317,84 @@ export function Timeline() {
     [activities],
   );
 
+  // Every recorded activity (auto or manual) as a span in hours-from-midnight.
+  // A "gap of no activity" is any time not covered by one of these.
+  const occupiedRanges = useMemo(
+    () =>
+      activities
+        .filter((a) => a.ends_at)
+        .map((a) => ({
+          start: Math.max(
+            0,
+            (new Date(a.starts_at).getTime() - selectedDate.getTime()) /
+              3_600_000,
+          ),
+          end: Math.min(
+            24,
+            (new Date(a.ends_at!).getTime() - selectedDate.getTime()) /
+              3_600_000,
+          ),
+        })),
+    [activities, selectedDate],
+  );
+
+  // Hovering an empty gap on the timeline bar shows a ghost spanning the *exact*
+  // gap between the surrounding recorded activities. For today, gaps stop at the
+  // current time (the future isn't a fillable gap).
+  function updateGhost(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const cursorH = clamp((e.clientX - rect.left) / rect.width, 0, 1) * 24;
+
+    const dayLimit = isToday
+      ? clamp((now.getTime() - selectedDate.getTime()) / 3_600_000, 0, 24)
+      : 24;
+
+    // Over an existing activity, or in the not-yet-happened future → no ghost.
+    if (
+      cursorH >= dayLimit ||
+      occupiedRanges.some((r) => cursorH >= r.start && cursorH < r.end)
+    ) {
+      setGhost(null);
+      return;
+    }
+
+    const startH = Math.max(
+      0,
+      ...occupiedRanges.filter((r) => r.end <= cursorH).map((r) => r.end),
+    );
+    const endH = Math.min(
+      dayLimit,
+      ...occupiedRanges.filter((r) => r.start >= cursorH).map((r) => r.start),
+    );
+    if (endH <= startH) {
+      setGhost(null);
+      return;
+    }
+
+    const toDate = (h: number) =>
+      new Date(selectedDate.getTime() + h * 3_600_000);
+    setGhost((prev) =>
+      prev &&
+      prev.leftPct === (startH / 24) * 100 &&
+      prev.widthPct === ((endH - startH) / 24) * 100
+        ? prev
+        : {
+            leftPct: (startH / 24) * 100,
+            widthPct: ((endH - startH) / 24) * 100,
+            start: toDate(startH),
+            end: toDate(endH),
+          },
+    );
+  }
+
+  function openAdd(span: { start: Date; end: Date }) {
+    setAddSpan(span);
+    setAddKey((k) => k + 1);
+    setAddOpen(true);
+    setGhost(null);
+  }
+
   // Memoized rendered block arrays. Crucially these do NOT depend on `zoom` —
   // each block is positioned by `left:%` / `width:%` within the inner div, so
   // when zoom changes the inner div widens and percentages scale naturally.
@@ -321,7 +415,7 @@ export function Timeline() {
               <div
                 role="button"
                 onClick={() => setSelected(a)}
-                className="bg-primary/70 text-primary-foreground hover:bg-primary absolute top-0 flex h-full cursor-pointer items-center overflow-hidden rounded px-1.5 text-[10px] transition-colors"
+                className="bg-primary/90 text-primary-foreground ring-background/40 hover:bg-primary absolute top-0 z-20 flex h-full cursor-pointer items-center overflow-hidden rounded px-1.5 text-[10px] ring-1 transition-colors"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
               >
                 <span className="truncate">{a.title}</span>
@@ -489,20 +583,32 @@ export function Timeline() {
               className="space-y-1"
               style={{ minWidth: "100%" }}
             >
-              {manualActivities.length > 0 && (
-                <div className="bg-muted/30 relative h-6 rounded">
-                  {activityBlocks}
-                  {nowPct !== null && (
-                    <div
-                      className="bg-foreground pointer-events-none absolute top-0 h-full w-px"
-                      style={{ left: `${nowPct}%` }}
-                    />
-                  )}
-                </div>
-              )}
-
-              <div className="bg-muted/30 relative h-12 rounded">
+              {/* Single timeline bar: auto-tracked usage as the background
+                  texture, manual activities as labeled foreground blocks (z-20),
+                  and a ghost spanning any true empty gap (click-to-add). */}
+              <div
+                className="bg-muted/30 relative h-12 rounded"
+                onMouseMove={updateGhost}
+                onMouseLeave={() => setGhost(null)}
+              >
                 {segmentBlocks}
+                {activityBlocks}
+                {ghost && (
+                  <div
+                    role="button"
+                    aria-label="Add activity in this gap"
+                    onClick={() =>
+                      openAdd({ start: ghost.start, end: ghost.end })
+                    }
+                    className="border-primary/50 bg-primary/10 text-primary hover:bg-primary/20 absolute top-0 z-10 flex h-full cursor-pointer items-center justify-center overflow-hidden rounded border border-dashed transition-colors"
+                    style={{
+                      left: `${ghost.leftPct}%`,
+                      width: `${ghost.widthPct}%`,
+                    }}
+                  >
+                    <Plus className="size-3.5 shrink-0" />
+                  </div>
+                )}
                 {nowPct !== null && (
                   <div
                     className="bg-foreground pointer-events-none absolute top-0 h-full w-px"
@@ -532,7 +638,7 @@ export function Timeline() {
             </div>
           </div>
 
-          {autoActivities.length === 0 && !error && (
+          {activities.length === 0 && !error && (
             <p className="text-muted-foreground mt-4 text-sm">
               {isToday
                 ? "No tracked activity yet today."
@@ -546,6 +652,20 @@ export function Timeline() {
         activity={selected}
         onOpenChange={(open) => !open && setSelected(null)}
         onChanged={() => setRefreshTick((n) => n + 1)}
+      />
+
+      {/* Remount per open so each ghost click re-seeds the pre-filled times. */}
+      <LogActivity
+        key={addKey}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        defaultDate={selectedDate}
+        defaultStart={addSpan?.start}
+        defaultEnd={addSpan?.end}
+        onCreated={() => {
+          setAddOpen(false);
+          setRefreshTick((n) => n + 1);
+        }}
       />
     </div>
   );

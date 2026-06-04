@@ -19,6 +19,9 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   defaultDate: Date;
   onCreated: () => void;
+  // Optional pre-filled span (e.g. from the timeline hover-to-add ghost).
+  defaultStart?: Date;
+  defaultEnd?: Date | null;
 };
 
 function defaultStartTime(forDate: Date): Date {
@@ -36,13 +39,17 @@ export function LogActivity({
   onOpenChange,
   defaultDate,
   onCreated,
+  defaultStart,
+  defaultEnd,
 }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [startLocal, setStartLocal] = useState(() =>
-    toDateTimeLocalValue(defaultStartTime(defaultDate)),
+    toDateTimeLocalValue(defaultStart ?? defaultStartTime(defaultDate)),
   );
-  const [endLocal, setEndLocal] = useState("");
+  const [endLocal, setEndLocal] = useState(() =>
+    defaultEnd ? toDateTimeLocalValue(defaultEnd) : "",
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -59,14 +66,24 @@ export function LogActivity({
       setError("Start time is required.");
       return;
     }
-    const start = new Date(startLocal);
+    // The datetime-local field is minute-precision; if a field still matches its
+    // pre-filled default (e.g. an untouched ghost span), use the exact default
+    // Date so the created activity keeps its original seconds and lands exactly
+    // where it was previewed.
+    const start =
+      defaultStart && startLocal === toDateTimeLocalValue(defaultStart)
+        ? defaultStart
+        : new Date(startLocal);
     if (Number.isNaN(start.getTime())) {
       setError("Invalid start time.");
       return;
     }
     let end: Date | null = null;
     if (endLocal) {
-      end = new Date(endLocal);
+      end =
+        defaultEnd && endLocal === toDateTimeLocalValue(defaultEnd)
+          ? defaultEnd
+          : new Date(endLocal);
       if (Number.isNaN(end.getTime())) {
         setError("Invalid end time.");
         return;

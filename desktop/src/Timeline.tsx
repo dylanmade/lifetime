@@ -10,12 +10,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  type Activity,
-  type AppSegment,
-  getActivitiesBetween,
-  getTimelineSegments,
-} from "./api";
+import { type ResolvedActivity, getActivitiesBetween } from "./api";
+import { ActivityDetail } from "./ActivityDetail";
 import {
   addDays,
   formatDuration,
@@ -104,8 +100,9 @@ export function Timeline() {
   const [selectedDate, setSelectedDate] = useState(() =>
     startOfDay(new Date()),
   );
-  const [segments, setSegments] = useState<AppSegment[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activities, setActivities] = useState<ResolvedActivity[]>([]);
+  const [selected, setSelected] = useState<ResolvedActivity | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [zoom, setZoom] = useState(1);
@@ -125,15 +122,11 @@ export function Timeline() {
       try {
         const dayEnd = addDays(selectedDate, 1);
         const end = isToday ? new Date() : dayEnd;
-        const [segs, acts] = await Promise.all([
-          getTimelineSegments(selectedDate.toISOString(), end.toISOString()),
-          getActivitiesBetween(
-            selectedDate.toISOString(),
-            dayEnd.toISOString(),
-          ),
-        ]);
+        const acts = await getActivitiesBetween(
+          selectedDate.toISOString(),
+          end.toISOString(),
+        );
         if (!cancelled) {
-          setSegments(segs);
           setActivities(acts);
           setError(null);
         }
@@ -157,7 +150,7 @@ export function Timeline() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [selectedDate, isToday]);
+  }, [selectedDate, isToday, refreshTick]);
 
   // Single entry point for changing the selected day. Resets scroll alongside
   // the state update so we don't carry over an unrelated viewport offset.
@@ -272,18 +265,23 @@ export function Timeline() {
     return (offset / dayMs) * 100;
   }, [isToday, now, selectedDate]);
 
+  const autoActivities = useMemo(
+    () => activities.filter((a) => a.source === "auto"),
+    [activities],
+  );
+
   const totalActive = useMemo(
     () =>
-      segments
-        .filter((s) => s.is_active)
+      autoActivities
+        .filter((a) => a.is_active)
         .reduce(
-          (sum, s) =>
+          (sum, a) =>
             sum +
-            (new Date(s.ends_at).getTime() - new Date(s.starts_at).getTime()) /
+            (new Date(a.ends_at!).getTime() - new Date(a.starts_at).getTime()) /
               1000,
           0,
         ),
-    [segments],
+    [autoActivities],
   );
 
   const ticks = useMemo(() => {
@@ -296,10 +294,10 @@ export function Timeline() {
     return result;
   }, [zoom]);
 
-  // Stable reference across renders so the block memos below don't invalidate
-  // every render.
-  const completedActivities = useMemo(
-    () => activities.filter((a) => a.ends_at),
+  // Completed manual activities (those with an end) render as blocks. Stable
+  // reference across renders so the block memos below don't invalidate.
+  const manualActivities = useMemo(
+    () => activities.filter((a) => a.source === "manual" && a.ends_at),
     [activities],
   );
 
@@ -310,7 +308,7 @@ export function Timeline() {
   // .map(), positionInDay() calls, and Tooltip reconciliation.
   const activityBlocks = useMemo(
     () =>
-      completedActivities.map((a) => {
+      manualActivities.map((a) => {
         const { leftPct, widthPct } = positionInDay(
           a.starts_at,
           a.ends_at!,
@@ -321,14 +319,16 @@ export function Timeline() {
           <Tooltip key={a.id}>
             <TooltipTrigger asChild>
               <div
-                className="bg-primary/70 text-primary-foreground hover:bg-primary absolute top-0 flex h-full cursor-default items-center overflow-hidden rounded px-1.5 text-[10px] transition-colors"
+                role="button"
+                onClick={() => setSelected(a)}
+                className="bg-primary/70 text-primary-foreground hover:bg-primary absolute top-0 flex h-full cursor-pointer items-center overflow-hidden rounded px-1.5 text-[10px] transition-colors"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
               >
-                <span className="truncate">{a.title ?? "(untitled)"}</span>
+                <span className="truncate">{a.title}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              <div className="font-medium">{a.title ?? "(untitled)"}</div>
+              <div className="font-medium">{a.title}</div>
               <div className="text-muted-foreground">
                 {formatTime(a.starts_at)} – {formatTime(a.ends_at!)}
               </div>
@@ -336,45 +336,47 @@ export function Timeline() {
           </Tooltip>
         );
       }),
-    [completedActivities, selectedDate],
+    [manualActivities, selectedDate],
   );
 
   const segmentBlocks = useMemo(
     () =>
-      segments.map((s, i) => {
+      autoActivities.map((a) => {
         const { leftPct, widthPct } = positionInDay(
-          s.starts_at,
-          s.ends_at,
+          a.starts_at,
+          a.ends_at!,
           selectedDate,
         );
         if (widthPct === 0) return null;
         const durSeconds =
-          (new Date(s.ends_at).getTime() - new Date(s.starts_at).getTime()) /
+          (new Date(a.ends_at!).getTime() - new Date(a.starts_at).getTime()) /
           1000;
         return (
-          <Tooltip key={i}>
+          <Tooltip key={a.id}>
             <TooltipTrigger asChild>
               <div
-                className="border-background/30 absolute top-0 h-full cursor-default border-r last:border-r-0"
+                role="button"
+                onClick={() => setSelected(a)}
+                className="border-background/30 absolute top-0 h-full cursor-pointer border-r last:border-r-0"
                 style={{
                   left: `${leftPct}%`,
                   width: `${widthPct}%`,
-                  backgroundColor: appColor(s.app_name, s.is_active),
+                  backgroundColor: appColor(a.app_name!, a.is_active!),
                 }}
               />
             </TooltipTrigger>
             <TooltipContent>
-              <div className="font-medium">{s.app_name}</div>
+              <div className="font-medium">{a.app_name}</div>
               <div className="text-muted-foreground">
-                {formatTime(s.starts_at)} – {formatTime(s.ends_at)} ·{" "}
+                {formatTime(a.starts_at)} – {formatTime(a.ends_at!)} ·{" "}
                 {formatDuration(durSeconds)}
-                {!s.is_active && " · idle"}
+                {!a.is_active && " · idle"}
               </div>
             </TooltipContent>
           </Tooltip>
         );
       }),
-    [segments, selectedDate],
+    [autoActivities, selectedDate],
   );
 
   return (
@@ -382,8 +384,8 @@ export function Timeline() {
       <DayNavHeader selectedDate={selectedDate} onSelectDate={selectDay} />
 
       <p className="text-muted-foreground text-sm">
-        {formatDuration(totalActive)} active across {segments.length} segment
-        {segments.length === 1 ? "" : "s"}
+        {formatDuration(totalActive)} active across {autoActivities.length}{" "}
+        segment{autoActivities.length === 1 ? "" : "s"}
       </p>
 
       {error && (
@@ -487,7 +489,7 @@ export function Timeline() {
               className="space-y-1"
               style={{ minWidth: "100%" }}
             >
-              {completedActivities.length > 0 && (
+              {manualActivities.length > 0 && (
                 <div className="bg-muted/30 relative h-6 rounded">
                   {activityBlocks}
                   {nowPct !== null && (
@@ -530,7 +532,7 @@ export function Timeline() {
             </div>
           </div>
 
-          {segments.length === 0 && !error && (
+          {autoActivities.length === 0 && !error && (
             <p className="text-muted-foreground mt-4 text-sm">
               {isToday
                 ? "No tracked activity yet today."
@@ -539,6 +541,12 @@ export function Timeline() {
           )}
         </CardContent>
       </Card>
+
+      <ActivityDetail
+        activity={selected}
+        onOpenChange={(open) => !open && setSelected(null)}
+        onChanged={() => setRefreshTick((n) => n + 1)}
+      />
     </div>
   );
 }

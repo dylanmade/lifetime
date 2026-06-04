@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { SectionLabel } from "@/components/section-label";
 import { DayNavHeader } from "@/components/day-nav-header";
@@ -11,14 +12,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  type Activity,
   type AppDuration,
   type HourActivity,
+  type ResolvedActivity,
   getActivitiesBetween,
   getAppTotals,
   getHourlyActivity,
 } from "./api";
 import { LogActivity } from "./LogActivity";
+import { ActivityDetail } from "./ActivityDetail";
 import {
   addDays,
   formatDuration,
@@ -39,7 +41,8 @@ export function Summary() {
   );
   const [totals, setTotals] = useState<AppDuration[]>([]);
   const [hourly, setHourly] = useState<HourActivity[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activities, setActivities] = useState<ResolvedActivity[]>([]);
+  const [selected, setSelected] = useState<ResolvedActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -91,6 +94,12 @@ export function Summary() {
   const maxApp = Math.max(1, ...totals.map((t) => t.active_seconds));
   const maxHour = Math.max(1, ...hourly.map((h) => h.active_seconds));
   const hasAnyHourly = hourly.some((h) => h.active_seconds > 0);
+  // The Activities card lists user-logged (manual) activities; auto-tracked
+  // usage lives in the breakdowns above and on the Timeline.
+  const manualActivities = useMemo(
+    () => activities.filter((a) => a.source === "manual"),
+    [activities],
+  );
 
   return (
     <div className="space-y-6">
@@ -190,30 +199,40 @@ export function Summary() {
             <SectionLabel>Activities</SectionLabel>
           </CardHeader>
           <CardContent className="space-y-3">
-            {activities.length === 0 ? (
+            {manualActivities.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No activities logged for this day.
               </p>
             ) : (
-              <ul className="space-y-2">
-                {activities.map((a) => (
-                  <li
-                    key={a.id}
-                    className="grid grid-cols-[140px_1fr] gap-4 border-b py-2 last:border-b-0"
-                  >
-                    <span className="text-muted-foreground font-mono text-xs tabular-nums">
-                      {formatTimeRange(a.starts_at, a.ends_at)}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">
-                        {a.title ?? "(untitled)"}
-                      </p>
-                      {a.description && (
-                        <p className="text-muted-foreground mt-1 text-sm">
-                          {a.description}
-                        </p>
-                      )}
-                    </div>
+              <ul>
+                {manualActivities.map((a) => (
+                  <li key={a.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelected(a)}
+                      className="hover:bg-muted/40 grid w-full grid-cols-[140px_1fr] gap-4 border-b py-2 text-left transition-colors last:border-b-0"
+                    >
+                      <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                        {formatTimeRange(a.starts_at, a.ends_at)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium">
+                            {a.title}
+                          </p>
+                          {a.category && (
+                            <Badge variant="secondary" className="shrink-0">
+                              {a.category}
+                            </Badge>
+                          )}
+                        </div>
+                        {a.description && (
+                          <p className="text-muted-foreground mt-1 truncate text-sm">
+                            {a.description}
+                          </p>
+                        )}
+                      </div>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -224,8 +243,11 @@ export function Summary() {
               onClick={() => setShowLog(true)}
             >
               <Plus />
-              Log activity
+              Add manual activity
             </Button>
+            <p className="text-muted-foreground text-xs">
+              Auto-tracked app usage also appears as activities on the Timeline.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -238,6 +260,12 @@ export function Summary() {
           setShowLog(false);
           setRefreshTick((n) => n + 1);
         }}
+      />
+
+      <ActivityDetail
+        activity={selected}
+        onOpenChange={(open) => !open && setSelected(null)}
+        onChanged={() => setRefreshTick((n) => n + 1)}
       />
     </div>
   );

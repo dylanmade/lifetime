@@ -91,6 +91,30 @@ pub struct ManualActivity {
     pub description: Option<String>,
 }
 
+/// Whether an activity was tracked automatically (derived from observations) or
+/// defined by the user. Carried on the resolved read-model, not stored — auto
+/// activities are derived, not persisted as rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivitySource {
+    Manual,
+    Auto,
+}
+
+/// Annotation `field` names used for last-write-wins edits to activities.
+/// Centralized so storage, resolution, and the command layer agree on the
+/// exact strings. An absent annotation means "unedited" (e.g. no `CATEGORY`
+/// annotation ⇒ Unassigned); a `DELETED` annotation with value `true` is a
+/// tombstone that hides the activity.
+pub mod activity_fields {
+    pub const TITLE: &str = "title";
+    pub const DESCRIPTION: &str = "description";
+    pub const CATEGORY: &str = "category";
+    pub const STARTS_AT: &str = "starts_at";
+    pub const ENDS_AT: &str = "ends_at";
+    pub const DELETED: &str = "deleted";
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
     pub id: AnnotationId,

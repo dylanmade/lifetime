@@ -143,6 +143,74 @@ impl Store {
         Ok(out)
     }
 
+    /// Fetch a single manual activity by id. Used to tell manual rows apart
+    /// from derived auto activities (auto ids never match a row).
+    pub fn get_activity_by_id(&self, id: Uuid) -> Result<Option<Activity>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT data FROM activities WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(r) => Ok(Some(serde_json::from_str(&r?)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Sync the denormalized `starts_at`/`ends_at` index columns after a manual
+    /// time edit, so range queries still find the activity. The authoritative
+    /// edited value lives in the time annotations; these columns are a cache
+    /// (see the module-level note on sibling columns existing for indexing).
+    pub fn update_activity_times(
+        &self,
+        id: Uuid,
+        starts_at: OffsetDateTime,
+        ends_at: Option<OffsetDateTime>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE activities SET starts_at = ?1, ends_at = ?2 WHERE id = ?3",
+            params![starts_at, ends_at, id],
+        )?;
+        Ok(())
+    }
+
+    /// All annotations targeting any of the given activity ids, in one query.
+    /// Feeds [`crate::activity::resolve_activities`].
+    pub fn annotations_for_activities(&self, ids: &[Uuid]) -> Result<Vec<Annotation>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, target_id, field, value, device_id, edited_at
+             FROM annotations
+             WHERE target_kind = 'activity' AND target_id IN ({placeholders})"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok((
+                row.get::<_, Uuid>(0)?,
+                row.get::<_, Uuid>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Uuid>(4)?,
+                row.get::<_, OffsetDateTime>(5)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, target_id, field, value, device_id, edited_at) = row?;
+            out.push(Annotation {
+                id,
+                target: AnnotationTarget::Activity(target_id),
+                field,
+                value: serde_json::from_str(&value)?,
+                device_id,
+                edited_at,
+            });
+        }
+        Ok(out)
+    }
+
     /// All observations in chronological order. Intended for migration / export,
     /// not for general UI queries (use `observations_between` for those).
     pub fn all_observations(&self) -> Result<Vec<Observation>> {
@@ -709,5 +777,78 @@ mod tests {
         assert_eq!(read.len(), 2);
         assert!(read.iter().any(|a| a.field == "category"));
         assert!(read.iter().any(|a| a.field == "note"));
+    }
+
+    #[test]
+    fn annotations_for_activities_filters_by_ids() {
+        let store = Store::open_in_memory().unwrap();
+        let device = nonce();
+        let a = nonce();
+        let b = nonce();
+        let mk = |target: Uuid, field: &str| Annotation {
+            id: nonce(),
+            target: AnnotationTarget::Activity(target),
+            field: field.into(),
+            value: json!("x"),
+            device_id: device,
+            edited_at: datetime!(2026-05-25 12:00 UTC),
+        };
+        store.insert_annotation(&mk(a, "category")).unwrap();
+        store.insert_annotation(&mk(a, "note")).unwrap();
+        store.insert_annotation(&mk(b, "category")).unwrap();
+
+        assert_eq!(store.annotations_for_activities(&[a]).unwrap().len(), 2);
+        assert_eq!(store.annotations_for_activities(&[a, b]).unwrap().len(), 3);
+        assert!(store.annotations_for_activities(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_activity_times_moves_into_window() {
+        let store = Store::open_in_memory().unwrap();
+        let act = Activity {
+            id: nonce(),
+            device_id: nonce(),
+            starts_at: datetime!(2026-05-20 12:00 UTC),
+            ends_at: Some(datetime!(2026-05-20 13:00 UTC)),
+            kind: ActivityKind::Manual(ManualActivity {
+                title: "x".into(),
+                description: None,
+            }),
+        };
+        store.insert_activity(&act).unwrap();
+        let window = (datetime!(2026-05-25 00:00 UTC), datetime!(2026-05-26 00:00 UTC));
+        assert!(
+            store
+                .activities_between(window.0, window.1)
+                .unwrap()
+                .is_empty()
+        );
+
+        store
+            .update_activity_times(
+                act.id,
+                datetime!(2026-05-25 09:00 UTC),
+                Some(datetime!(2026-05-25 10:00 UTC)),
+            )
+            .unwrap();
+        assert_eq!(store.activities_between(window.0, window.1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn get_activity_by_id_distinguishes_rows() {
+        let store = Store::open_in_memory().unwrap();
+        let act = Activity {
+            id: nonce(),
+            device_id: nonce(),
+            starts_at: datetime!(2026-05-25 12:00 UTC),
+            ends_at: None,
+            kind: ActivityKind::Manual(ManualActivity {
+                title: "Open".into(),
+                description: None,
+            }),
+        };
+        store.insert_activity(&act).unwrap();
+        assert!(store.get_activity_by_id(act.id).unwrap().is_some());
+        assert!(store.get_activity_by_id(nonce()).unwrap().is_none());
     }
 }

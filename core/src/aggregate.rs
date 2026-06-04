@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
+use uuid::Uuid;
 
 use crate::model::{Observation, ObservationKind};
 
@@ -38,6 +39,12 @@ pub struct AppSegment {
     #[serde(with = "time::serde::rfc3339")]
     pub ends_at: OffsetDateTime,
     pub is_active: bool,
+    /// Id of the first observation in this run. Stable across re-derivation
+    /// (observations are append-only), so it anchors the identity of the
+    /// derived auto-activity that annotations attach to.
+    pub origin_observation_id: Uuid,
+    /// Window title from the run's first observation, for activity detail.
+    pub window_title: Option<String>,
 }
 
 pub fn aggregate_by_app(
@@ -204,6 +211,8 @@ pub fn aggregate_into_segments(
                 && last.is_active == sample.is_active
                 && last.ends_at == span_start
             {
+                // Extend the run; keep the first observation's id/title as the
+                // stable anchor.
                 last.ends_at = span_end;
                 continue;
             }
@@ -214,6 +223,8 @@ pub fn aggregate_into_segments(
             starts_at: span_start,
             ends_at: span_end,
             is_active: sample.is_active,
+            origin_observation_id: obs.id,
+            window_title: sample.window_title.clone(),
         });
     }
 

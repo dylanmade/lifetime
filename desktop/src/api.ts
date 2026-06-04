@@ -58,28 +58,22 @@ export const getHourlyActivity = (
 ): Promise<HourActivity[]> =>
   invoke("get_hourly_activity", { startIso, endIso });
 
-export type AppSegment = {
-  app_name: string;
-  bundle_id: string | null;
-  starts_at: string;
-  ends_at: string;
-  is_active: boolean;
-};
+export type ActivitySource = "manual" | "auto";
 
-export const getTimelineSegments = (
-  startIso: string,
-  endIso: string,
-): Promise<AppSegment[]> =>
-  invoke("get_timeline_segments", { startIso, endIso });
-
-export type Activity = {
+// The unified activity read-model. Auto-only measured fields (app_name,
+// bundle_id, window_title, is_active) are null for manual activities.
+export type ResolvedActivity = {
   id: string;
-  device_id: string;
+  source: ActivitySource;
   starts_at: string;
   ends_at: string | null;
-  kind: string;
-  title?: string;
-  description?: string | null;
+  title: string;
+  category: string | null; // null ⇒ Unassigned
+  description: string | null;
+  app_name: string | null;
+  bundle_id: string | null;
+  window_title: string | null;
+  is_active: boolean | null;
 };
 
 export const createManualActivity = (input: {
@@ -87,7 +81,7 @@ export const createManualActivity = (input: {
   description: string | null;
   startsAtIso: string;
   endsAtIso: string | null;
-}): Promise<Activity> =>
+}): Promise<void> =>
   invoke("create_manual_activity", {
     title: input.title,
     description: input.description,
@@ -98,8 +92,25 @@ export const createManualActivity = (input: {
 export const getActivitiesBetween = (
   startIso: string,
   endIso: string,
-): Promise<Activity[]> =>
+): Promise<ResolvedActivity[]> =>
   invoke("get_activities_between", { startIso, endIso });
+
+// Partial edit. Only the provided fields are written as annotation events.
+// For description/category an empty string clears the value; endsAtIso "" makes
+// a manual activity open-ended. title/time are rejected on auto activities.
+export const updateActivity = (
+  id: string,
+  fields: {
+    title?: string;
+    description?: string;
+    category?: string;
+    startsAtIso?: string;
+    endsAtIso?: string;
+  },
+): Promise<void> => invoke("update_activity", { id, ...fields });
+
+export const deleteActivity = (id: string): Promise<void> =>
+  invoke("delete_activity", { id });
 
 export const isAccessibilityGranted = (): Promise<boolean> =>
   invoke("accessibility_granted");

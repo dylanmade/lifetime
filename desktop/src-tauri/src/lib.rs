@@ -3,17 +3,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use lifetime_core::activity::{ResolvedActivity, auto_activity_id, resolve_activities};
 use lifetime_core::aggregate::{
-    AppDuration, AppSegment, HourActivity, aggregate_by_app, aggregate_by_hour,
-    aggregate_into_segments,
+    AppDuration, HourActivity, aggregate_by_app, aggregate_by_hour, aggregate_into_segments,
 };
 use lifetime_core::model::{
-    Activity, ActivityKind, ManualActivity, Observation, ObservationKind,
+    Activity, ActivityKind, Annotation, AnnotationTarget, ManualActivity, Observation,
+    ObservationKind, activity_fields,
 };
 use lifetime_core::storage::{self, Store};
 use lifetime_core::theme::{ThemeProfile, ThemeProfileSummary};
 use lifetime_crypto::{MasterKey, RecoveryFile, SealedVault, vault as crypto_vault};
 use serde::Serialize;
+use serde_json::json;
 use tauri::{Manager, State};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -303,22 +305,153 @@ fn create_manual_activity(
     Ok(activity)
 }
 
+/// Unified activity read: manual rows + auto runs derived from observations,
+/// each with its last-write-wins annotations overlaid, tombstoned ones dropped.
 #[tauri::command]
 fn get_activities_between(
     ctx: State<Arc<AppContext>>,
     start_iso: String,
     end_iso: String,
-) -> Result<Vec<Activity>, String> {
+) -> Result<Vec<ResolvedActivity>, String> {
     let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
     let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    let store = guard
-        .store()
-        .ok_or_else(|| "app is locked".to_string())?;
-    store
-        .activities_between(start, end)
-        .map_err(|e| e.to_string())
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+
+    let observations = store
+        .observations_between(start, end)
+        .map_err(|e| e.to_string())?;
+    let segments =
+        aggregate_into_segments(&observations, start, end, time::Duration::minutes(2));
+    let manual = store.activities_between(start, end).map_err(|e| e.to_string())?;
+
+    let mut ids: Vec<Uuid> = manual.iter().map(|a| a.id).collect();
+    ids.extend(segments.iter().map(|s| auto_activity_id(s.origin_observation_id)));
+    let annotations = store
+        .annotations_for_activities(&ids)
+        .map_err(|e| e.to_string())?;
+
+    Ok(resolve_activities(manual, segments, annotations))
+}
+
+/// Edit an activity by appending annotation events (LWW). Each provided field
+/// is set; for the nullable text fields an empty string clears the value.
+/// Auto-tracked activities only accept `category`/`description`; manual ones
+/// accept all fields. Manual time edits also sync the index columns.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn update_activity(
+    ctx: State<Arc<AppContext>>,
+    id: String,
+    title: Option<String>,
+    description: Option<String>,
+    category: Option<String>,
+    starts_at_iso: Option<String>,
+    ends_at_iso: Option<String>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+
+    let is_manual = store
+        .get_activity_by_id(uuid)
+        .map_err(|e| e.to_string())?
+        .is_some();
+    if !is_manual && (title.is_some() || starts_at_iso.is_some() || ends_at_iso.is_some()) {
+        return Err("auto-tracked activities only support category and note edits".to_string());
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let device = ctx.device_id;
+
+    if let Some(title) = &title {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err("title cannot be empty".to_string());
+        }
+        write_annotation(store, device, uuid, activity_fields::TITLE, json!(title), now)?;
+    }
+    if let Some(desc) = &description {
+        write_annotation(
+            store,
+            device,
+            uuid,
+            activity_fields::DESCRIPTION,
+            nullable_text(desc),
+            now,
+        )?;
+    }
+    if let Some(cat) = &category {
+        write_annotation(
+            store,
+            device,
+            uuid,
+            activity_fields::CATEGORY,
+            nullable_text(cat),
+            now,
+        )?;
+    }
+
+    // Time edits (manual only — guarded above).
+    let new_start = match &starts_at_iso {
+        Some(s) => Some(OffsetDateTime::parse(s, &Rfc3339).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    let new_end: Option<Option<OffsetDateTime>> = match &ends_at_iso {
+        Some(s) if s.trim().is_empty() => Some(None),
+        Some(s) => Some(Some(
+            OffsetDateTime::parse(s, &Rfc3339).map_err(|e| e.to_string())?,
+        )),
+        None => None,
+    };
+    if let Some(s) = &starts_at_iso {
+        write_annotation(store, device, uuid, activity_fields::STARTS_AT, json!(s), now)?;
+    }
+    if let Some(s) = &ends_at_iso {
+        let value = if s.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            json!(s)
+        };
+        write_annotation(store, device, uuid, activity_fields::ENDS_AT, value, now)?;
+    }
+    if is_manual && (new_start.is_some() || new_end.is_some()) {
+        let base = store
+            .get_activity_by_id(uuid)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "activity not found".to_string())?;
+        let resolved_start = new_start.unwrap_or(base.starts_at);
+        let resolved_end = new_end.unwrap_or(base.ends_at);
+        if let Some(end) = resolved_end {
+            if end <= resolved_start {
+                return Err("end time must be after start time".to_string());
+            }
+        }
+        store
+            .update_activity_times(uuid, resolved_start, resolved_end)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Delete an activity by writing a `deleted` tombstone annotation. Works for
+/// manual rows and derived auto activities alike; raw observations are kept.
+#[tauri::command]
+fn delete_activity(ctx: State<Arc<AppContext>>, id: String) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
+    write_annotation(
+        store,
+        ctx.device_id,
+        uuid,
+        activity_fields::DELETED,
+        json!(true),
+        OffsetDateTime::now_utc(),
+    )
 }
 
 #[tauri::command]
@@ -339,31 +472,6 @@ fn get_hourly_activity(
         .map_err(|e| e.to_string())?;
 
     Ok(aggregate_by_hour(
-        &observations,
-        start,
-        end,
-        time::Duration::minutes(2),
-    ))
-}
-
-#[tauri::command]
-fn get_timeline_segments(
-    ctx: State<Arc<AppContext>>,
-    start_iso: String,
-    end_iso: String,
-) -> Result<Vec<AppSegment>, String> {
-    let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
-    let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
-
-    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    let store = guard
-        .store()
-        .ok_or_else(|| "app is locked".to_string())?;
-    let observations = store
-        .observations_between(start, end)
-        .map_err(|e| e.to_string())?;
-
-    Ok(aggregate_into_segments(
         &observations,
         start,
         end,
@@ -489,9 +597,10 @@ pub fn run() {
             get_recent_observations,
             get_app_totals,
             get_hourly_activity,
-            get_timeline_segments,
             create_manual_activity,
             get_activities_between,
+            update_activity,
+            delete_activity,
             accessibility_granted,
             request_accessibility,
             list_theme_profiles,
@@ -502,6 +611,38 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Append one activity-edit annotation event.
+fn write_annotation(
+    store: &Store,
+    device_id: Uuid,
+    target: Uuid,
+    field: &str,
+    value: serde_json::Value,
+    edited_at: OffsetDateTime,
+) -> Result<(), String> {
+    store
+        .insert_annotation(&Annotation {
+            id: Uuid::now_v7(),
+            target: AnnotationTarget::Activity(target),
+            field: field.to_string(),
+            value,
+            device_id,
+            edited_at,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Trim a free-text edit; an empty result becomes JSON `null` (an explicit
+/// clear), which resolution reads as "unset".
+fn nullable_text(s: &str) -> serde_json::Value {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(trimmed.to_string())
+    }
 }
 
 fn read_vault(path: &Path) -> Result<SealedVault, String> {

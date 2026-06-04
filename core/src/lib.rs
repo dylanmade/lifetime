@@ -3,6 +3,7 @@
 //! Compiled native on desktop and embedded in mobile clients via UniFFI (iOS)
 //! and JNI (Android).
 
+pub mod activity;
 pub mod aggregate;
 pub mod lww;
 pub mod model;

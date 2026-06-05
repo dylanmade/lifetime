@@ -415,10 +415,12 @@ export function Timeline() {
               <div
                 role="button"
                 onClick={() => setSelected(a)}
-                className="bg-primary/90 text-primary-foreground ring-background/40 hover:bg-primary absolute top-0 z-20 flex h-full cursor-pointer items-center overflow-hidden rounded px-1.5 text-[10px] ring-1 transition-colors"
+                className="bg-primary/90 text-primary-foreground hover:bg-primary absolute top-0 z-20 flex h-full cursor-pointer items-center overflow-hidden text-[10px] transition-colors"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
               >
-                <span className="truncate">{a.title}</span>
+                {/* px on the span (clipped on tiny blocks) so the block width
+                    never floors at the padding — it tracks the slot exactly. */}
+                <span className="truncate px-1.5">{a.title}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>

@@ -14,6 +14,11 @@ import { type ResolvedActivity, getActivitiesBetween } from "./api";
 import { ActivityDetail } from "./ActivityDetail";
 import { LogActivity } from "./LogActivity";
 import {
+  DeviceScopeToggle,
+  type DeviceScope,
+  scopeArg,
+} from "@/components/device-scope-toggle";
+import {
   addDays,
   formatDuration,
   formatTime,
@@ -119,6 +124,7 @@ export function Timeline() {
   // Bumped on each open so the add dialog remounts with fresh pre-filled times.
   const [addKey, setAddKey] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [scope, setScope] = useState<DeviceScope>("local");
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [zoom, setZoom] = useState(1);
@@ -141,6 +147,7 @@ export function Timeline() {
         const acts = await getActivitiesBetween(
           selectedDate.toISOString(),
           end.toISOString(),
+          scopeArg(scope),
         );
         if (!cancelled) {
           setActivities(acts);
@@ -166,7 +173,7 @@ export function Timeline() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [selectedDate, isToday, refreshTick]);
+  }, [selectedDate, isToday, refreshTick, scope]);
 
   // Single entry point for changing the selected day. Resets scroll alongside
   // the state update so we don't carry over an unrelated viewport offset.
@@ -479,10 +486,13 @@ export function Timeline() {
     <div className="space-y-6">
       <DayNavHeader selectedDate={selectedDate} onSelectDate={selectDay} />
 
-      <p className="text-muted-foreground text-sm">
-        {formatDuration(totalActive)} active across {autoActivities.length}{" "}
-        segment{autoActivities.length === 1 ? "" : "s"}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-muted-foreground text-sm">
+          {formatDuration(totalActive)} active across {autoActivities.length}{" "}
+          segment{autoActivities.length === 1 ? "" : "s"}
+        </p>
+        <DeviceScopeToggle value={scope} onChange={setScope} />
+      </div>
 
       {error && (
         <Alert variant="destructive">

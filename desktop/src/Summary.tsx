@@ -22,6 +22,11 @@ import {
 import { LogActivity } from "./LogActivity";
 import { ActivityDetail } from "./ActivityDetail";
 import {
+  DeviceScopeToggle,
+  type DeviceScope,
+  scopeArg,
+} from "@/components/device-scope-toggle";
+import {
   addDays,
   formatDuration,
   formatTimeRange,
@@ -46,6 +51,7 @@ export function Summary() {
   const [error, setError] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [scope, setScope] = useState<DeviceScope>("local");
 
   const isToday = useMemo(
     () => isSameDay(selectedDate, new Date()),
@@ -60,10 +66,11 @@ export function Summary() {
         const start = selectedDate;
         const end = isToday ? new Date() : addDays(selectedDate, 1);
         const dayEnd = addDays(selectedDate, 1);
+        const dev = scopeArg(scope);
         const [t, h, a] = await Promise.all([
-          getAppTotals(start.toISOString(), end.toISOString()),
-          getHourlyActivity(start.toISOString(), end.toISOString()),
-          getActivitiesBetween(start.toISOString(), dayEnd.toISOString()),
+          getAppTotals(start.toISOString(), end.toISOString(), dev),
+          getHourlyActivity(start.toISOString(), end.toISOString(), dev),
+          getActivitiesBetween(start.toISOString(), dayEnd.toISOString(), dev),
         ]);
         if (!cancelled) {
           setTotals(t);
@@ -88,7 +95,7 @@ export function Summary() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [selectedDate, isToday, refreshTick]);
+  }, [selectedDate, isToday, refreshTick, scope]);
 
   const totalActive = totals.reduce((sum, t) => sum + t.active_seconds, 0);
   const maxApp = Math.max(1, ...totals.map((t) => t.active_seconds));
@@ -108,10 +115,13 @@ export function Summary() {
         onSelectDate={(date) => setSelectedDate(startOfDay(date))}
       />
 
-      <p className="text-muted-foreground text-sm">
-        {formatDuration(totalActive)} active across {totals.length} app
-        {totals.length === 1 ? "" : "s"}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-muted-foreground text-sm">
+          {formatDuration(totalActive)} active across {totals.length} app
+          {totals.length === 1 ? "" : "s"}
+        </p>
+        <DeviceScopeToggle value={scope} onChange={setScope} />
+      </div>
 
       {error && (
         <Alert variant="destructive">

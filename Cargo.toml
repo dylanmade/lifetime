@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "crypto", "server", "tracker", "desktop/src-tauri"]
+members = ["core", "crypto", "net", "server", "tracker", "desktop/src-tauri"]
 
 [workspace.package]
 version = "0.0.1"
@@ -10,4 +10,5 @@ rust-version = "1.85"
 [workspace.dependencies]
 lifetime-core = { path = "core" }
 lifetime-crypto = { path = "crypto" }
+lifetime-net = { path = "net" }
 lifetime-tracker = { path = "tracker" }

@@ -32,6 +32,36 @@ export const enableEncryption = (
 ): Promise<EnableEncryptionResult> =>
   invoke("enable_encryption", { passphrase });
 
+// --- P2P sync (Phase B) ---------------------------------------------------
+
+// Join an existing vault by importing its recovery file; returns the fingerprint.
+export const importRecoveryAndPair = (
+  recoveryText: string,
+  passphrase: string,
+): Promise<string> =>
+  invoke("import_recovery_and_pair", { recoveryText, passphrase });
+
+export type SyncPeer = {
+  device_id: string;
+  host: string;
+  port: number;
+};
+
+export type SyncStatus = {
+  listening_port: number | null;
+  peers: SyncPeer[];
+  last_peer: string | null;
+  last_synced_at: string | null;
+  last_sent: number;
+  last_received: number;
+  last_error: string | null;
+};
+
+export const syncStatus = (): Promise<SyncStatus> => invoke("sync_status");
+
+export const syncWith = (host: string, port: number): Promise<SyncStatus> =>
+  invoke("sync_with", { host, port });
+
 export const getRecentObservations = (limit: number): Promise<Observation[]> =>
   invoke("get_recent_observations", { limit });
 
@@ -42,10 +72,14 @@ export type AppDuration = {
   idle_seconds: number;
 };
 
+// Reads are device-scoped: omit deviceId for the local device (default), pass a
+// device uuid for that device, or "all" to amalgamate across devices.
 export const getAppTotals = (
   startIso: string,
   endIso: string,
-): Promise<AppDuration[]> => invoke("get_app_totals", { startIso, endIso });
+  deviceId?: string,
+): Promise<AppDuration[]> =>
+  invoke("get_app_totals", { startIso, endIso, deviceId });
 
 export type HourActivity = {
   hour: number;
@@ -55,8 +89,9 @@ export type HourActivity = {
 export const getHourlyActivity = (
   startIso: string,
   endIso: string,
+  deviceId?: string,
 ): Promise<HourActivity[]> =>
-  invoke("get_hourly_activity", { startIso, endIso });
+  invoke("get_hourly_activity", { startIso, endIso, deviceId });
 
 export type ActivitySource = "manual" | "auto";
 
@@ -92,8 +127,9 @@ export const createManualActivity = (input: {
 export const getActivitiesBetween = (
   startIso: string,
   endIso: string,
+  deviceId?: string,
 ): Promise<ResolvedActivity[]> =>
-  invoke("get_activities_between", { startIso, endIso });
+  invoke("get_activities_between", { startIso, endIso, deviceId });
 
 // Partial edit. Only the provided fields are written as annotation events.
 // For description/category an empty string clears the value; endsAtIso "" makes

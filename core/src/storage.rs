@@ -5,15 +5,20 @@
 //! source-of-truth payload per row; sibling columns exist purely for
 //! indexing and time-range filtering.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{Connection, params};
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
+use crate::lww::{AnnotationKey, resolve};
 use crate::model::{
     Activity, ActivityKind, Annotation, AnnotationTarget, Observation, ObservationKind,
+    activity_fields,
 };
+use crate::sync::{SyncRecord, VersionVector};
 use crate::theme::{ThemeProfile, ThemeProfileSummary};
 
 #[derive(Debug, thiserror::Error)]
@@ -394,6 +399,211 @@ impl Store {
         }
         Ok(out)
     }
+
+    // ---- Sync primitives (Phase A) ------------------------------------------
+
+    /// Highest record id held from each origin device, across all event tables.
+    /// The peer compares this against its own to learn what it's missing.
+    pub fn version_vector(&self) -> Result<VersionVector> {
+        let mut vv: VersionVector = HashMap::new();
+        for table in ["observations", "activities", "annotations"] {
+            let sql = format!("SELECT device_id, MAX(id) FROM {table} GROUP BY device_id");
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows =
+                stmt.query_map([], |row| Ok((row.get::<_, Uuid>(0)?, row.get::<_, Uuid>(1)?)))?;
+            for row in rows {
+                let (device, max_id) = row?;
+                vv.entry(device)
+                    .and_modify(|cur| {
+                        if max_id > *cur {
+                            *cur = max_id;
+                        }
+                    })
+                    .or_insert(max_id);
+            }
+        }
+        Ok(vv)
+    }
+
+    /// Every record this store holds that `peer` lacks: for each origin device, the
+    /// records (all tables) with `id` past the peer's watermark for that device, or
+    /// all of the device's records if the peer has none.
+    pub fn records_since(&self, peer: &VersionVector) -> Result<Vec<SyncRecord>> {
+        let mut out = Vec::new();
+        for device in self.version_vector()?.keys().copied() {
+            let after = peer.get(&device).copied();
+            for obs in self.observations_from(device, after)? {
+                out.push(SyncRecord::Observation(obs));
+            }
+            for act in self.activities_from(device, after)? {
+                out.push(SyncRecord::Activity(act));
+            }
+            for ann in self.annotations_from(device, after)? {
+                out.push(SyncRecord::Annotation(ann));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Idempotently apply foreign records (`INSERT OR IGNORE` by id); returns the
+    /// number actually inserted. Reconciles the denormalized activity time columns
+    /// for any activity that received a time annotation, so `activities_between`
+    /// still finds it.
+    pub fn ingest(&self, records: &[SyncRecord]) -> Result<usize> {
+        let mut applied = 0;
+        let mut time_edited: HashSet<Uuid> = HashSet::new();
+        for record in records {
+            match record {
+                SyncRecord::Observation(o) => applied += self.ingest_observation(o)?,
+                SyncRecord::Activity(a) => applied += self.ingest_activity(a)?,
+                SyncRecord::Annotation(ann) => {
+                    applied += self.ingest_annotation(ann)?;
+                    if let AnnotationTarget::Activity(id) = ann.target {
+                        if ann.field == activity_fields::STARTS_AT
+                            || ann.field == activity_fields::ENDS_AT
+                        {
+                            time_edited.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        for id in time_edited {
+            self.reconcile_activity_times(id)?;
+        }
+        Ok(applied)
+    }
+
+    fn observations_from(&self, device: Uuid, after: Option<Uuid>) -> Result<Vec<Observation>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT data FROM observations
+             WHERE device_id = ?1 AND (?2 IS NULL OR id > ?2)
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![device, after], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
+    }
+
+    fn activities_from(&self, device: Uuid, after: Option<Uuid>) -> Result<Vec<Activity>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT data FROM activities
+             WHERE device_id = ?1 AND (?2 IS NULL OR id > ?2)
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![device, after], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
+    }
+
+    fn annotations_from(&self, device: Uuid, after: Option<Uuid>) -> Result<Vec<Annotation>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, target_kind, target_id, field, value, device_id, edited_at
+             FROM annotations
+             WHERE device_id = ?1 AND (?2 IS NULL OR id > ?2)
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![device, after], |row| {
+            Ok((
+                row.get::<_, Uuid>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Uuid>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Uuid>(5)?,
+                row.get::<_, OffsetDateTime>(6)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, target_kind, target_id, field, value, device_id, edited_at) = row?;
+            let target = match target_kind.as_str() {
+                "observation" => AnnotationTarget::Observation(target_id),
+                "activity" => AnnotationTarget::Activity(target_id),
+                _ => continue,
+            };
+            out.push(Annotation {
+                id,
+                target,
+                field,
+                value: serde_json::from_str(&value)?,
+                device_id,
+                edited_at,
+            });
+        }
+        Ok(out)
+    }
+
+    fn ingest_observation(&self, obs: &Observation) -> Result<usize> {
+        let kind = observation_kind_discriminant(&obs.kind);
+        let data = serde_json::to_string(obs)?;
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO observations (id, device_id, recorded_at, kind, data)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![obs.id, obs.device_id, obs.recorded_at, kind, data],
+        )?)
+    }
+
+    fn ingest_activity(&self, act: &Activity) -> Result<usize> {
+        let kind = activity_kind_discriminant(&act.kind);
+        let data = serde_json::to_string(act)?;
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO activities (id, device_id, starts_at, ends_at, kind, data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![act.id, act.device_id, act.starts_at, act.ends_at, kind, data],
+        )?)
+    }
+
+    fn ingest_annotation(&self, ann: &Annotation) -> Result<usize> {
+        let (target_kind, target_id) = annotation_target_parts(&ann.target);
+        let value = serde_json::to_string(&ann.value)?;
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO annotations
+                 (id, target_kind, target_id, field, value, device_id, edited_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                ann.id,
+                target_kind,
+                target_id,
+                ann.field,
+                value,
+                ann.device_id,
+                ann.edited_at
+            ],
+        )?)
+    }
+
+    /// Re-derive an activity's effective start/end from its annotations (LWW) and
+    /// sync the denormalized index columns. No-op if the activity row isn't present.
+    fn reconcile_activity_times(&self, activity_id: Uuid) -> Result<()> {
+        let Some(base) = self.get_activity_by_id(activity_id)? else {
+            return Ok(());
+        };
+        let resolved = resolve(self.annotations_for_activities(&[activity_id])?);
+        let key = |field: &str| AnnotationKey {
+            target: AnnotationTarget::Activity(activity_id),
+            field: field.to_string(),
+        };
+        let start = resolved
+            .get(&key(activity_fields::STARTS_AT))
+            .and_then(|a| a.value.as_str())
+            .and_then(|s| OffsetDateTime::parse(s, &Rfc3339).ok())
+            .unwrap_or(base.starts_at);
+        let end = match resolved.get(&key(activity_fields::ENDS_AT)) {
+            Some(a) => a
+                .value
+                .as_str()
+                .and_then(|s| OffsetDateTime::parse(s, &Rfc3339).ok()),
+            None => base.ends_at,
+        };
+        self.update_activity_times(activity_id, start, end)
+    }
 }
 
 /// Issue `PRAGMA key` against an open SQLCipher connection, then sanity-check
@@ -477,6 +687,8 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 CREATE INDEX IF NOT EXISTS idx_activities_starts_at
     ON activities(starts_at);
+CREATE INDEX IF NOT EXISTS idx_activities_device_id
+    ON activities(device_id);
 
 CREATE TABLE IF NOT EXISTS annotations (
     id BLOB PRIMARY KEY NOT NULL,
@@ -491,6 +703,8 @@ CREATE INDEX IF NOT EXISTS idx_annotations_target
     ON annotations(target_kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_target_field
     ON annotations(target_kind, target_id, field);
+CREATE INDEX IF NOT EXISTS idx_annotations_device_id
+    ON annotations(device_id);
 
 CREATE TABLE IF NOT EXISTS theme_profiles (
     id BLOB PRIMARY KEY NOT NULL,

@@ -14,6 +14,7 @@ import {
   requestAccessibility,
 } from "./api";
 import { EnableEncryption } from "./EnableEncryption";
+import { SyncSettings } from "./SyncSettings";
 
 type Props = {
   appState: AppStateInfo;
@@ -84,6 +85,8 @@ export function Settings({ appState, onStateChanged }: Props) {
           )}
         </CardContent>
       </Card>
+
+      <SyncSettings appState={appState} onStateChanged={onStateChanged} />
 
       <Card>
         <CardHeader>

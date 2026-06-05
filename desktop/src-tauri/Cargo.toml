@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lifetime-core = { workspace = true }
 lifetime-crypto = { workspace = true }
+lifetime-net = { workspace = true }
 lifetime-tracker = { workspace = true }
 uuid = { version = "1", features = ["v7"] }
 time = { version = "0.3", features = ["formatting"] }
+mdns-sd = "0.11"

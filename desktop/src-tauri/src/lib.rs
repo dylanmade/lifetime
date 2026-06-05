@@ -1,3 +1,4 @@
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -24,6 +25,9 @@ use uuid::Uuid;
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_INTERVAL: time::Duration = time::Duration::seconds(60);
 const SQLCIPHER_INFO: &[u8] = b"lifetime/sqlcipher/v1";
+const SYNC_PSK_INFO: &[u8] = b"lifetime/sync/psk/v1";
+/// Bounds how long a stalled peer can hold the app-state lock during a session.
+const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 struct AppPaths {
@@ -68,6 +72,29 @@ struct AppContext {
     paths: AppPaths,
     device_id: Uuid,
     state: Mutex<AppState>,
+    sync: Mutex<SyncStatusInfo>,
+}
+
+/// Live, observable state of the P2P sync service (for `sync_status` / the UI).
+#[derive(Debug, Clone, Default, Serialize)]
+struct SyncStatusInfo {
+    /// Port this device's sync listener is bound to (for a peer to dial).
+    listening_port: Option<u16>,
+    /// Other Lifetime devices discovered on the LAN via mDNS.
+    peers: Vec<PeerInfo>,
+    last_peer: Option<String>,
+    last_synced_at: Option<String>,
+    last_sent: usize,
+    last_received: usize,
+    last_error: Option<String>,
+}
+
+/// A peer discovered on the local network.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct PeerInfo {
+    device_id: String,
+    host: String,
+    port: u16,
 }
 
 #[derive(Serialize)]
@@ -128,7 +155,44 @@ fn enable_encryption(
     if passphrase.is_empty() {
         return Err("passphrase cannot be empty".to_string());
     }
+    let master_key = MasterKey::generate();
+    let recovery_file = RecoveryFile::new(master_key.clone()).to_text();
+    let fingerprint = establish_encryption(ctx.inner(), &passphrase, master_key)?;
+    Ok(EnableEncryptionResult {
+        recovery_file,
+        fingerprint,
+    })
+}
 
+/// Join an existing vault by importing its recovery file: install the shared
+/// master key, seal a local vault with `passphrase`, migrate any local plaintext
+/// data into the encrypted store, and unlock. The sync service then pulls the
+/// rest of the dataset from the paired device. Requires plaintext state.
+#[tauri::command]
+fn import_recovery_and_pair(
+    ctx: State<Arc<AppContext>>,
+    recovery_text: String,
+    passphrase: String,
+) -> Result<String, String> {
+    if passphrase.is_empty() {
+        return Err("passphrase cannot be empty".to_string());
+    }
+    let master_key = RecoveryFile::from_text(&recovery_text)
+        .map_err(|e| e.to_string())?
+        .into_master_key();
+    establish_encryption(ctx.inner(), &passphrase, master_key)
+}
+
+/// Shared encryption bootstrap for both `enable_encryption` (fresh key) and
+/// `import_recovery_and_pair` (imported key): seal the vault with `passphrase`
+/// wrapping `master_key`, migrate the current plaintext DB into a fresh encrypted
+/// one, and transition to Unlocked. Requires the current state to be Plaintext;
+/// returns the key fingerprint.
+fn establish_encryption(
+    ctx: &Arc<AppContext>,
+    passphrase: &str,
+    master_key: MasterKey,
+) -> Result<String, String> {
     let paths = ctx.paths.clone();
     let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
 
@@ -139,11 +203,9 @@ fn enable_encryption(
     let _ = std::fs::remove_file(paths.temp_db());
     let _ = std::fs::remove_file(paths.temp_vault());
 
-    let master_key = MasterKey::generate();
     let sqlcipher_key = master_key.derive_subkey(SQLCIPHER_INFO, 32);
-
-    let encrypted_store = Store::open_encrypted(&paths.temp_db(), &sqlcipher_key)
-        .map_err(|e| e.to_string())?;
+    let encrypted_store =
+        Store::open_encrypted(&paths.temp_db(), &sqlcipher_key).map_err(|e| e.to_string())?;
 
     if let AppState::Plaintext(plaintext) = &*guard {
         if let Err(e) = storage::migrate(plaintext, &encrypted_store) {
@@ -154,16 +216,14 @@ fn enable_encryption(
     }
     drop(encrypted_store);
 
-    let sealed = crypto_vault::seal(&master_key, &passphrase).map_err(|e| e.to_string())?;
+    let sealed = crypto_vault::seal(&master_key, passphrase).map_err(|e| e.to_string())?;
     let vault_json = serde_json::to_string_pretty(&sealed).map_err(|e| e.to_string())?;
     std::fs::write(paths.temp_vault(), &vault_json).map_err(|e| e.to_string())?;
 
-    // Close plaintext store by replacing state. The previous Store drops here,
-    // releasing the file handle so the rename below works on Windows too.
+    // Close the plaintext store by replacing state so its file handle releases.
     *guard = AppState::Locked;
 
-    // Commit sequence. The vault rename is the point of no return — after it
-    // succeeds, future startups will require the passphrase.
+    // Commit sequence. The vault rename is the point of no return.
     if let Err(e) = std::fs::rename(paths.temp_vault(), &paths.vault_path) {
         let _ = std::fs::remove_file(paths.temp_vault());
         let _ = std::fs::remove_file(paths.temp_db());
@@ -182,21 +242,14 @@ fn enable_encryption(
     }
     let _ = std::fs::remove_file(paths.backup_db());
 
-    let new_store = Store::open_encrypted(&paths.db_path, &sqlcipher_key)
-        .map_err(|e| e.to_string())?;
-
+    let new_store =
+        Store::open_encrypted(&paths.db_path, &sqlcipher_key).map_err(|e| e.to_string())?;
     let fingerprint = master_key.fingerprint();
-    let recovery_text = RecoveryFile::new(master_key.clone()).to_text();
-
     *guard = AppState::Unlocked {
         store: new_store,
         master_key,
     };
-
-    Ok(EnableEncryptionResult {
-        recovery_file: recovery_text,
-        fingerprint,
-    })
+    Ok(fingerprint)
 }
 
 #[tauri::command]
@@ -240,17 +293,22 @@ fn get_app_totals(
     ctx: State<Arc<AppContext>>,
     start_iso: String,
     end_iso: String,
+    device_id: Option<String>,
 ) -> Result<Vec<AppDuration>, String> {
     let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
     let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let scope = resolve_scope(ctx.device_id, device_id)?;
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
     let store = guard
         .store()
         .ok_or_else(|| "app is locked".to_string())?;
-    let observations = store
-        .observations_between(start, end)
-        .map_err(|e| e.to_string())?;
+    let observations = scope_observations(
+        store
+            .observations_between(start, end)
+            .map_err(|e| e.to_string())?,
+        scope,
+    );
 
     Ok(aggregate_by_app(
         &observations,
@@ -312,19 +370,32 @@ fn get_activities_between(
     ctx: State<Arc<AppContext>>,
     start_iso: String,
     end_iso: String,
+    device_id: Option<String>,
 ) -> Result<Vec<ResolvedActivity>, String> {
     let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
     let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let scope = resolve_scope(ctx.device_id, device_id)?;
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
     let store = guard.store().ok_or_else(|| "app is locked".to_string())?;
 
-    let observations = store
-        .observations_between(start, end)
-        .map_err(|e| e.to_string())?;
+    // Scope auto activities (derived from observations) and manual rows to the
+    // requested device. Annotations are fetched by activity id regardless of which
+    // device authored the edit, so cross-device edits still apply (LWW).
+    let observations = scope_observations(
+        store
+            .observations_between(start, end)
+            .map_err(|e| e.to_string())?,
+        scope,
+    );
     let segments =
         aggregate_into_segments(&observations, start, end, time::Duration::minutes(2));
-    let manual = store.activities_between(start, end).map_err(|e| e.to_string())?;
+    let manual: Vec<Activity> = store
+        .activities_between(start, end)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|a| scope.is_none_or(|d| a.device_id == d))
+        .collect();
 
     let mut ids: Vec<Uuid> = manual.iter().map(|a| a.id).collect();
     ids.extend(segments.iter().map(|s| auto_activity_id(s.origin_observation_id)));
@@ -459,17 +530,22 @@ fn get_hourly_activity(
     ctx: State<Arc<AppContext>>,
     start_iso: String,
     end_iso: String,
+    device_id: Option<String>,
 ) -> Result<Vec<HourActivity>, String> {
     let start = OffsetDateTime::parse(&start_iso, &Rfc3339).map_err(|e| e.to_string())?;
     let end = OffsetDateTime::parse(&end_iso, &Rfc3339).map_err(|e| e.to_string())?;
+    let scope = resolve_scope(ctx.device_id, device_id)?;
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
     let store = guard
         .store()
         .ok_or_else(|| "app is locked".to_string())?;
-    let observations = store
-        .observations_between(start, end)
-        .map_err(|e| e.to_string())?;
+    let observations = scope_observations(
+        store
+            .observations_between(start, end)
+            .map_err(|e| e.to_string())?,
+        scope,
+    );
 
     Ok(aggregate_by_hour(
         &observations,
@@ -557,12 +633,180 @@ fn delete_theme_profile(ctx: State<Arc<AppContext>>, id: String) -> Result<(), S
     store.delete_theme_profile(uuid).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn sync_status(ctx: State<Arc<AppContext>>) -> Result<SyncStatusInfo, String> {
+    let st = ctx.sync.lock().map_err(|e| e.to_string())?;
+    Ok(st.clone())
+}
+
+/// Manually sync with a peer at `host:port` (this device initiates). Phase B
+/// uses explicit addresses; mDNS auto-discovery is the next increment.
+#[tauri::command]
+fn sync_with(
+    ctx: State<Arc<AppContext>>,
+    host: String,
+    port: u16,
+) -> Result<SyncStatusInfo, String> {
+    let addr = format!("{host}:{port}");
+    let stream = TcpStream::connect(&addr).map_err(|e| e.to_string())?;
+    run_sync(ctx.inner(), stream, addr, true)?;
+    let st = ctx.sync.lock().map_err(|e| e.to_string())?;
+    Ok(st.clone())
+}
+
+/// Run one sync round over `stream`, holding the app-state lock for its (small,
+/// fast) duration — bounded by socket timeouts so a stalled peer can't freeze the
+/// app. Records the outcome in the shared sync status.
+fn run_sync(
+    ctx: &Arc<AppContext>,
+    stream: TcpStream,
+    peer: String,
+    initiator: bool,
+) -> Result<(), String> {
+    let _ = stream.set_read_timeout(Some(SYNC_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(SYNC_TIMEOUT));
+
+    let outcome = {
+        let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+        let AppState::Unlocked { store, master_key } = &*guard else {
+            return Err("enable encryption to sync".to_string());
+        };
+        let psk = master_key.derive_subkey(SYNC_PSK_INFO, 32);
+        lifetime_net::run_session(store, stream, &psk, initiator).map_err(|e| e.to_string())
+    };
+
+    let mut st = ctx.sync.lock().map_err(|e| e.to_string())?;
+    st.last_peer = Some(peer);
+    match &outcome {
+        Ok(o) => {
+            st.last_synced_at = OffsetDateTime::now_utc().format(&Rfc3339).ok();
+            st.last_sent = o.sent;
+            st.last_received = o.received;
+            st.last_error = None;
+        }
+        Err(e) => st.last_error = Some(e.clone()),
+    }
+    outcome.map(|_| ())
+}
+
+/// Accept inbound sync connections on an ephemeral port, recording it in the sync
+/// status so a peer can dial it. Each connection runs a responder session. Returns
+/// the bound port (for mDNS advertising).
+fn start_sync_listener(ctx: Arc<AppContext>) -> Option<u16> {
+    let listener = match TcpListener::bind("0.0.0.0:0") {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("sync listener bind failed: {e}");
+            return None;
+        }
+    };
+    let port = listener.local_addr().ok()?.port();
+    if let Ok(mut st) = ctx.sync.lock() {
+        st.listening_port = Some(port);
+    }
+    thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let Ok(stream) = incoming else { continue };
+            let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+            let ctx = ctx.clone();
+            thread::spawn(move || {
+                if let Err(e) = run_sync(&ctx, stream, peer, false) {
+                    eprintln!("inbound sync failed: {e}");
+                }
+            });
+        }
+    });
+    Some(port)
+}
+
+const SYNC_SERVICE: &str = "_lifetime-sync._tcp.local.";
+
+/// Advertise this device and browse for other Lifetime devices on the LAN via
+/// mDNS. Discovered peers land in the sync status so the UI can offer one-click
+/// sync (no IP typing). Same-vault trust is still enforced at the PSK handshake,
+/// so a discovered peer from a different vault simply fails to sync.
+fn start_mdns(ctx: Arc<AppContext>, port: u16) {
+    use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+
+    let mdns = match ServiceDaemon::new() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("mdns init failed: {e}");
+            return;
+        }
+    };
+
+    let instance = ctx.device_id.to_string();
+    let host = format!("{instance}.local.");
+    let mut props = std::collections::HashMap::new();
+    props.insert("device".to_string(), instance.clone());
+    match ServiceInfo::new(SYNC_SERVICE, &instance, &host, "", port, props) {
+        Ok(info) => {
+            if let Err(e) = mdns.register(info.enable_addr_auto()) {
+                eprintln!("mdns register failed: {e}");
+            }
+        }
+        Err(e) => eprintln!("mdns service info failed: {e}"),
+    }
+
+    let receiver = match mdns.browse(SYNC_SERVICE) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("mdns browse failed: {e}");
+            return;
+        }
+    };
+
+    thread::spawn(move || {
+        let _daemon = mdns; // keep the daemon alive for the app's lifetime
+        let me = ctx.device_id.to_string();
+        while let Ok(event) = receiver.recv() {
+            match event {
+                ServiceEvent::ServiceResolved(info) => {
+                    let device = info.get_property_val_str("device").unwrap_or("").to_string();
+                    if device.is_empty() || device == me {
+                        continue;
+                    }
+                    let addr = info
+                        .get_addresses()
+                        .iter()
+                        .find(|a| a.is_ipv4())
+                        .or_else(|| info.get_addresses().iter().next())
+                        .copied();
+                    let Some(addr) = addr else { continue };
+                    let peer = PeerInfo {
+                        device_id: device,
+                        host: addr.to_string(),
+                        port: info.get_port(),
+                    };
+                    if let Ok(mut st) = ctx.sync.lock() {
+                        st.peers.retain(|p| p.device_id != peer.device_id);
+                        st.peers.push(peer);
+                    }
+                }
+                ServiceEvent::ServiceRemoved(_ty, fullname) => {
+                    let dev = fullname.split('.').next().unwrap_or("");
+                    if let Ok(mut st) = ctx.sync.lock() {
+                        st.peers.retain(|p| p.device_id != dev);
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
+            // LIFETIME_DATA_DIR lets a second instance run with an isolated
+            // dataset on the same machine (for two-device sync testing).
+            let app_data_dir = match std::env::var_os("LIFETIME_DATA_DIR") {
+                Some(dir) => PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&app_data_dir)?;
 
             let paths = AppPaths {
@@ -583,10 +827,14 @@ pub fn run() {
                 paths,
                 device_id,
                 state: Mutex::new(state),
+                sync: Mutex::new(SyncStatusInfo::default()),
             });
 
             app.manage(ctx.clone());
-            start_sampling_loop(ctx);
+            start_sampling_loop(ctx.clone());
+            if let Some(port) = start_sync_listener(ctx.clone()) {
+                start_mdns(ctx, port);
+            }
 
             Ok(())
         })
@@ -594,6 +842,9 @@ pub fn run() {
             app_state,
             unlock,
             enable_encryption,
+            import_recovery_and_pair,
+            sync_with,
+            sync_status,
             get_recent_observations,
             get_app_totals,
             get_hourly_activity,
@@ -611,6 +862,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Resolve a read-scope request to an optional origin-device filter. A `None`
+/// request ⇒ the local device (the default, so synced-in data never force-merges
+/// into one timeline); `"all"` ⇒ no filter (amalgamated); a uuid ⇒ that device.
+fn resolve_scope(local: Uuid, requested: Option<String>) -> Result<Option<Uuid>, String> {
+    match requested.as_deref() {
+        None => Ok(Some(local)),
+        Some("all") => Ok(None),
+        Some(s) => Uuid::parse_str(s).map(Some).map_err(|e| e.to_string()),
+    }
+}
+
+/// Keep only observations from the scoped origin device (all, if `None`).
+fn scope_observations(obs: Vec<Observation>, scope: Option<Uuid>) -> Vec<Observation> {
+    match scope {
+        Some(device) => obs.into_iter().filter(|o| o.device_id == device).collect(),
+        None => obs,
+    }
 }
 
 /// Append one activity-edit annotation event.

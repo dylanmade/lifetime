@@ -137,14 +137,16 @@ impl<S: Read + Write> Channel<S> {
         };
 
         let mut buf = vec![0u8; u16::MAX as usize];
+        // A handshake read that fails to decrypt almost always means the peers
+        // hold different pre-shared keys — i.e. they're in different vaults.
         if initiator {
             let n = hs.write_message(&[], &mut buf)?;
             write_raw(&mut stream, &buf[..n])?;
             let msg = read_raw(&mut stream)?;
-            hs.read_message(&msg, &mut buf)?;
+            hs.read_message(&msg, &mut buf).map_err(handshake_err)?;
         } else {
             let msg = read_raw(&mut stream)?;
-            hs.read_message(&msg, &mut buf)?;
+            hs.read_message(&msg, &mut buf).map_err(handshake_err)?;
             let n = hs.write_message(&[], &mut buf)?;
             write_raw(&mut stream, &buf[..n])?;
         }
@@ -183,6 +185,15 @@ impl<S: Read + Write> Channel<S> {
         }
         Ok(serde_json::from_slice(&data)?)
     }
+}
+
+/// Map a Noise handshake failure to a readable hint — the usual cause is the two
+/// peers holding different keys (i.e. they're in different vaults).
+fn handshake_err(_: snow::Error) -> NetError {
+    NetError::Protocol(
+        "handshake failed — the peer is in a different vault (different master key). \
+         Pair the devices with the same recovery file.",
+    )
 }
 
 fn write_raw<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {

@@ -28,19 +28,27 @@ The desktop app builds on Windows with the MSVC toolchain. The only extra step v
 a typical Tauri app is the SQLCipher dependency, which compiles **OpenSSL from source**
 and therefore needs Perl and NASM available on `PATH`.
 
-Install once:
+Install once, **in this order** (the C++ toolchain must exist before Rust, and the
+OpenSSL build tools before the first `cargo build`):
 
-1. **Rust (MSVC)** — `rustup` default toolchain `stable-x86_64-pc-windows-msvc`.
-2. **Visual Studio Build Tools** with the "Desktop development with C++" workload
-   (provides the MSVC compiler + Windows SDK).
-3. **WebView2 Runtime** — preinstalled on Windows 10/11; otherwise install the
+1. **Visual Studio Build Tools** with the "Desktop development with C++" workload
+   (provides the MSVC compiler, linker, and Windows SDK).
+2. **Rust (MSVC)** — `rustup` default toolchain `stable-x86_64-pc-windows-msvc`.
+3. **Strawberry Perl** — https://strawberryperl.com. Needed to build vendored OpenSSL,
+   and it must be the Perl that wins on `PATH` (see the warning below).
+4. **NASM** — https://www.nasm.us (assembler for OpenSSL); add its folder to `PATH`.
+5. **Node.js 18+**.
+6. **WebView2 Runtime** — preinstalled on Windows 10/11; otherwise install the
    Evergreen runtime from Microsoft.
-4. **Node.js 18+**.
-5. **Strawberry Perl** — https://strawberryperl.com (needed to build vendored OpenSSL).
-6. **NASM** — https://www.nasm.us (assembler for OpenSSL); add its folder to `PATH`.
 7. **Tauri CLI**: `npm install` in `desktop/` brings it in via devDependencies.
 
-Then:
+> **Run the build from PowerShell or Command Prompt — not Git Bash / MSYS2.** Those
+> shells put their own Unix Perl ahead of Strawberry Perl on `PATH`, and that Perl is
+> missing modules OpenSSL needs (`Locale::Maketext::Simple`, etc.), which breaks the
+> OpenSSL build. Verify with `Get-Command perl` → it should be
+> `C:\Strawberry\perl\bin\perl.exe`.
+
+Then (in PowerShell):
 
 ```powershell
 cd desktop
@@ -49,8 +57,24 @@ npm run tauri dev      # run the app
 npm run tauri build    # produce an .msi / .exe installer under src-tauri\target\release\bundle
 ```
 
-If the build fails inside `openssl-sys`/`openssl-src`, it's almost always a missing
-Perl or NASM — confirm `perl --version` and `nasm --version` both work in the same shell.
+### Troubleshooting
+
+- **`cargo metadata ... program not found`** (or `cargo`/`rustc` "not recognized"):
+  the terminal can't find Cargo on its PATH. Install Rust via `rustup`, then **close and
+  reopen the terminal** (and your editor if you launch the terminal from it) so
+  `%USERPROFILE%\.cargo\bin` is picked up. Verify with `cargo --version` in the same shell
+  you run `npm run tauri dev` from.
+
+- **OpenSSL build fails** — `'perl' reported failure` /
+  `Can't locate Locale/Maketext/Simple.pm in @INC` (with `/usr/share/perl5/...` paths):
+  a Unix Perl from Git Bash / MSYS2 is being used instead of Strawberry Perl. Fix it:
+  1. Build from **PowerShell / Command Prompt**, not Git Bash / MSYS2.
+  2. Ensure Strawberry Perl wins: `Get-Command perl` → `C:\Strawberry\perl\bin\perl.exe`.
+     If not, force it: `$env:OPENSSL_SRC_PERL = "C:\Strawberry\perl\bin\perl.exe"`.
+  3. `cargo clean` (or delete `target\debug\build\openssl-sys-*`) so OpenSSL re-configures,
+     then rebuild.
+
+  Sanity check: `perl -MLocale::Maketext::Simple -e 1` succeeds on Strawberry Perl.
 
 ## Running two instances for sync testing (one machine)
 
